@@ -1,0 +1,30 @@
+2026-07-31 10:10:00,426 INFO    MainThread:8464 [wandb_setup.py:_flush():81] Current SDK version is 0.28.1
+2026-07-31 10:10:00,426 INFO    MainThread:8464 [wandb_setup.py:_flush():81] Configure stats pid to 8464
+2026-07-31 10:10:00,426 INFO    MainThread:8464 [wandb_setup.py:_flush():81] Loading settings from environment variables
+2026-07-31 10:10:00,426 INFO    MainThread:8464 [wandb_init.py:setup_run_log_directory():729] Logging user logs to C:\Users\sigwar01\Documents\Masterarbeit\Project\MasterCode\scripts\wandb\run-20260731_101000-frs83lb9\logs\debug.log
+2026-07-31 10:10:00,426 INFO    MainThread:8464 [wandb_init.py:setup_run_log_directory():730] Logging internal logs to C:\Users\sigwar01\Documents\Masterarbeit\Project\MasterCode\scripts\wandb\run-20260731_101000-frs83lb9\logs\debug-internal.log
+2026-07-31 10:10:00,426 INFO    MainThread:8464 [wandb_init.py:init():772] calling init triggers
+2026-07-31 10:10:00,430 INFO    MainThread:8464 [wandb_init.py:init():777] wandb.init called with sweep_config: {}
+config: {'_wandb': {}}
+2026-07-31 10:10:00,430 INFO    MainThread:8464 [wandb_init.py:init():820] starting backend
+2026-07-31 10:10:00,430 INFO    MainThread:8464 [wandb_init.py:init():835] sending inform_init request
+2026-07-31 10:10:23,404 INFO    wandb-AsyncioManager-main:8464 [service_client.py:_forward_responses():122] [no run ID] Reached EOF.
+2026-07-31 10:10:23,404 INFO    wandb-AsyncioManager-main:8464 [mailbox.py:close():154] [no run ID] Closing mailbox, abandoning 1 handles.
+2026-07-31 10:10:23,404 WARNING MainThread:8464 [wandb_init.py:init():1526] [no run ID] interrupted
+Traceback (most recent call last):
+  File "C:\Users\sigwar01\Documents\Masterarbeit\Project\venv\Lib\site-packages\wandb\sdk\wandb_init.py", line 1517, in init
+    run = wi.init(run_settings, run_config, run_printer)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\sigwar01\Documents\Masterarbeit\Project\venv\Lib\site-packages\wandb\sdk\wandb_init.py", line 836, in init
+    interface = service.inform_init(
+                ^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\sigwar01\Documents\Masterarbeit\Project\venv\Lib\site-packages\wandb\sdk\lib\service\service_connection.py", line 297, in inform_init
+    self._asyncer.run(init_and_wait_for_response)
+  File "C:\Users\sigwar01\Documents\Masterarbeit\Project\venv\Lib\site-packages\wandb\sdk\lib\asyncio_manager.py", line 145, in run
+    return future.result()
+           ^^^^^^^^^^^^^^^
+  File "C:\Users\sigwar01\AppData\Local\Python\pythoncore-3.12-64\Lib\concurrent\futures\_base.py", line 451, in result
+    self._condition.wait(timeout)
+  File "C:\Users\sigwar01\AppData\Local\Python\pythoncore-3.12-64\Lib\threading.py", line 355, in wait
+    waiter.acquire()
+KeyboardInterrupt
