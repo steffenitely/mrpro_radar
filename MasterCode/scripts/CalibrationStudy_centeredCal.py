@@ -699,7 +699,7 @@ for i, calibration in enumerate(calibration_models):
         plt.ylabel("Motor displacement (cm)")
 
         plt.title(
-            f"Cal {cal_id} → Test {test_id} | RMSE = {error:.4f}"
+            f"Cal {i} → Test {j} | RMSE = {error:.4f}"
         )
 
         plt.legend()

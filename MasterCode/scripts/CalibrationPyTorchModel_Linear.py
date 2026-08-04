@@ -27,8 +27,8 @@ wandb.init(
 # ══════════════════════════════════════════════════════════════════════════════
 # Calibrate and rnd Movement
 #Both done in one measurement
-RADAR = "Data/RadarTest/radar_20260716_151558.npz"
-MOTOR = "Data/TimeLogs/time_log_20260716_152033.json"  
+RADAR = "Data/RadarTest/radar_20260729_145247.npz"
+MOTOR = "Data/TimeLogs/time_log_20260729_145342.json"  
 
 save_dir = "Data/calibration_plots/SegmentationWandB_Linear"
 os.makedirs(save_dir, exist_ok=True)
@@ -298,16 +298,18 @@ class MotorNet(nn.Module):
     def forward(self, x):
         return self.linear(x)
 
-def train_model(X, y, segment_id, epochs=200, lr=1e-3):
+def train_model(X, y, segment_id, epochs=1000, lr=1e-1):
+    torch.manual_seed(0)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     model = MotorNet().to(device)
 
-    X_t = torch.tensor(X, dtype=torch.float32).unsqueeze(1).to(device)
-    y_t = torch.tensor(y, dtype=torch.float32).unsqueeze(1).to(device)
+    X_t = torch.tensor(X, dtype=torch.float32).to(device)
+    y_t = torch.tensor(y, dtype=torch.float32).to(device)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     loss_fn = nn.MSELoss()
+    prev_loss = float("inf")  # or None
 
     for epoch in range(epochs):
         model.train()
@@ -320,10 +322,21 @@ def train_model(X, y, segment_id, epochs=200, lr=1e-3):
         optimizer.step()
 
         # Log to W&B
-        wandb.log({
+        if epoch % 50 == 0:
+            wandb.log({
             f"train_loss_seg_{segment_id}": loss.item(),
             "epoch": epoch
-        })
+            })
+
+        if prev_loss is not None:
+            if abs(prev_loss - loss.item()) < 1e-10:
+                print("Converged at epoch", epoch)
+                print(f"Final loss: {loss.item():.6f}")
+                break
+
+        prev_loss = loss.item()
+
+    model.eval()
 
     return model
 
@@ -493,6 +506,7 @@ segments = allign_and_split(RADAR, MOTOR, segment_length=40.0)
 
 calibration_models = []
 all_segments = []
+reference_mean = None
 
 for i in range(len(segments)):
 
@@ -503,30 +517,19 @@ for i in range(len(segments)):
     if len(radar_times) == 0 or len(motor_times) < 2:
         print("Skipping (not enough data)")
         continue
-    
-    all_segments.append({
-        "segment": i,
-        "radar_cube": radar_cube_seg,
-        "radar_times": radar_times,
-        "motor_times": motor_times,
-        "motor_positions": motor_positions
-    })
 
-
-    if i >= 6:
-        print("Skipping PCA/model for this segment")
-        continue
-    # ─────────────────────────────────────
-    # Basic extraction
-    # ─────────────────────────────────────
     rx1, rx2, rx1_cf, rx2_cf, *_ = basic_info_extraction(radar_cube_seg)
 
-    # ─────────────────────────────────────
-    # PCA
-    # ─────────────────────────────────────
-    M_both = np.hstack([rx1_cf, rx2_cf])
-    mean = np.mean(M_both, axis=0)
 
+    M_both = np.hstack([rx1_cf, rx2_cf])
+
+    if i == 0:
+        reference_mean = np.mean(M_both, axis=0)
+        print("Stored reference mean from segment 0; skipping segment 0 for the rest of the analysis")
+        continue
+
+    mean = reference_mean if reference_mean is not None else np.mean(M_both, axis=0)
+    
     M_centered = torch.tensor(M_both - mean, dtype=torch.float32)
 
     op = PCACompressionOp(
@@ -537,6 +540,28 @@ for i in range(len(segments)):
 
     pca = op(M_centered)[0]
     pc1 = pca[:, 0].numpy()
+
+    # plot_motor_vs_pca(pca_values=pc1,
+    #                   motor_times_aligned=motor_times,
+    #                   motor_positions=motor_positions,
+    #                   radar_times_sec=radar_times,
+    #                   segment=i
+    #                   )
+
+    all_segments.append({
+        "segment": i,
+        "radar_cube": radar_cube_seg,
+        "radar_times": radar_times,
+        "motor_times": motor_times,
+        "motor_positions": motor_positions
+    })
+
+
+    if i >= 7:
+        print("Skipping PCA/model for this segment")
+        continue
+
+
 
     # ─────────────────────────────────────
     # Align motor
@@ -568,8 +593,8 @@ for i in range(len(segments)):
     scaler_y = StandardScaler()
 
 
-    X_trimmed = X[mask].reshape(-1,1).flatten()
-    y_trimmed = y[mask].reshape(-1,1).flatten()
+    X_trimmed = X[mask].reshape(-1,1)
+    y_trimmed = y[mask].reshape(-1,1)
 
 
     # X_scaled = scaler_X.fit_transform(X_trimmed.reshape(-1,1)).flatten()
@@ -579,19 +604,12 @@ for i in range(len(segments)):
     model_path = os.path.join(save_dir, f"model_segment_{i}.pkl")
 
 
+    torch.save(model.state_dict(), model_path)
     wandb.save(model_path)
 
     slope = model.linear.weight.item()
     intercept = model.linear.bias.item()
 
-    # X_mean = scaler_X.mean_[0]
-    # X_std  = scaler_X.scale_[0]
-
-    # y_mean = scaler_y.mean_[0]
-    # y_std  = scaler_y.scale_[0]
-
-    # slope = slope_scaled * (y_std / X_std)
-    # intercept = y_mean + y_std * intercept_scaled - slope_scaled * X_mean
     
     # Log training metrics
     wandb.log({
@@ -650,19 +668,18 @@ calibration_matrix = np.zeros(
 )
 
 
-for calibration in calibration_models:
+for i, calibration in enumerate(calibration_models):
 
-    cal_id = calibration["segment"]
-
+    
     mean = calibration["mean"]
     op = calibration["pca_operator"]
     model = calibration["model"]
 
 
-    for test in all_segments:
+    for j, test in enumerate(all_segments):
 
         test_id = test["segment"]
-        print(f"Calibration {cal_id} -> Test {test_id}")
+        print(f"Calibration {i} -> Test {j}")
 
 
         # -------------------------------
@@ -703,19 +720,17 @@ for calibration in calibration_models:
         # -------------------------------
         model.eval()
 
-        X_test_scaled = scaler_X.transform(pc1_test.reshape(-1,1)).flatten()
-        X_test_t = torch.tensor(pc1_test, dtype=torch.float32).unsqueeze(1)
+        X_test_t = torch.tensor(pc1_test.reshape(-1,1), dtype=torch.float32)
 
         with torch.no_grad():
-            y_pred_scaled = model(X_test_t).squeeze().cpu().numpy()
+            y_pred = model(X_test_t).squeeze().cpu().numpy()
 
-        y_pred = scaler_y.inverse_transform(y_pred_scaled.reshape(-1,1)).flatten()
         y_interp = np.interp( t_motor, t_radar, y_pred)
 
         error = rmse(y_motor, y_interp)
         
         wandb.log({
-            f"prediction_plot_cal{cal_id}_test{test_id}": wandb.Image(plt),
+            f"prediction_plot_cal{i}_test{j}": wandb.Image(plt),
             "rmse": error
         })
 
@@ -727,7 +742,7 @@ for calibration in calibration_models:
         # RMSE and Plots
         # -------------------------------
         
-        calibration_matrix[cal_id, test_id] = error
+        calibration_matrix[i, j] = error
 
 
         plt.figure(figsize=(10,5))
@@ -740,16 +755,16 @@ for calibration in calibration_models:
         plt.ylabel("Motor displacement (cm)")
 
         plt.title(
-            f"Cal {cal_id} → Test {test_id} | RMSE = {error:.4f}"
+            f"Cal {i} → Test {j} | RMSE = {error:.4f}"
         )
 
         plt.legend()
         plt.grid()
 
-        filename = os.path.join(save_dir, f"cal_{cal_id}_test_{test_id}.png")
+        filename = os.path.join(save_dir, f"cal_{i}_test_{j}.png")
         plt.savefig(filename, dpi=150, bbox_inches="tight")
         wandb.log({
-            f"prediction_plot_cal{cal_id}_test{test_id}": wandb.Image(plt)
+            f"prediction_plot_cal{i}_test{j}": wandb.Image(plt)
         })
         plt.close()
 
@@ -763,8 +778,6 @@ plt.imshow(
 plt.colorbar(label="RMSE")
 plt.xlabel("Test segment")
 plt.ylabel("Calibration segment")
-plt.xticks(range(n_segments))
-plt.yticks(range(n_segments))
 plt.title("Calibration Transfer Matrix")
 
 filename = os.path.join(save_dir, "calibration_matrix.png")
