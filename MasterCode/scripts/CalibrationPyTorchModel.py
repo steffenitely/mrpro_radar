@@ -18,7 +18,7 @@ wandb.init(
         "segment_length": 40.0,
         "model": "PyTorch Nonlinear Regression",
         "pca_components": 510,
-        "trim_ratio": 0.1
+        "trim_ratio": 0.03
     }
 )
 
@@ -30,8 +30,16 @@ wandb.init(
 RADAR = "Data/RadarTest/radar_20260729_145247.npz"
 MOTOR = "Data/TimeLogs/time_log_20260729_145342.json"  
 
-save_dir = "Data/calibration_plots/SegmentationWandB_Nonlinear"
-os.makedirs(save_dir, exist_ok=True)
+save_dir = "Data/calibration_plots/SegmentationWandB_Nonlinear/00"
+
+motor_pca_dir = os.path.join(save_dir, "Motor_vs_PCA")
+regression_dir = os.path.join(save_dir, "RegressionModels")
+single_model_dir = os.path.join(save_dir, "RegressionModel_per_segment")
+cal_test_dir = os.path.join(save_dir, "Calibration_vs_Test")
+cal_matrix_dir = os.path.join(save_dir, "Calibration_Matrix")
+
+for d in [motor_pca_dir, regression_dir, single_model_dir, cal_test_dir, cal_matrix_dir]:
+    os.makedirs(d, exist_ok=True)
 # ══════════════════════════════════════════════════════════════════════════════
 MOTOR_EPOCH: datetime.datetime | None = None
 # ══════════════════════════════════
@@ -279,7 +287,7 @@ def plot_pca_vs_motor(
 
     plt.title("PCA  vs  Motor Position  (aligned to t = 0)", fontsize=13, pad=10)
     plt.tight_layout()
-    plt.savefig("pca_vs_motor.png", dpi=150, bbox_inches="tight")
+    plt.savefig(os.path.join(motor_pca_dir, "pca_vs_motor.png"), dpi=150, bbox_inches="tight")
     print("Saved → pca_vs_motor.png")
     plt.show()
 
@@ -317,6 +325,11 @@ def train_model(X, y, segment_id, epochs=2000, lr=1e-3):
     loss_fn = nn.MSELoss()
     prev_loss = float("inf")  # or None
 
+    patience = 50
+    counter = 0
+    min_delta = 1e-7
+
+
     for epoch in range(epochs):
         model.train()
 
@@ -327,6 +340,12 @@ def train_model(X, y, segment_id, epochs=2000, lr=1e-3):
         loss.backward()
         optimizer.step()
 
+
+        if prev_loss - loss.item() < min_delta:
+            counter += 1
+        else:
+            counter = 0
+
         # Log to W&B
         if epoch % 50 == 0:
             wandb.log({
@@ -334,11 +353,10 @@ def train_model(X, y, segment_id, epochs=2000, lr=1e-3):
             "epoch": epoch
             })
 
-        if prev_loss is not None:
-            if abs(prev_loss - loss.item()) < 1e-10:
-                print("Converged at epoch", epoch)
-                print(f"Final loss: {loss.item():.6f}")
-                break
+        if counter >= patience:
+            print(f"Early stopping at epoch {epoch}")
+            print(f"Final loss: {loss.item():.6f}")
+            break
 
         prev_loss = loss.item()
 
@@ -436,6 +454,48 @@ def rmse(y_true, y_pred):
     return rmse
 
 
+def plot_nonlinear_model(
+    model: nn.Module,
+    x_values: np.ndarray,
+    y_values: np.ndarray,
+    x_label: str = "PCA",
+    y_label: str = "Position in cm",
+    title: str | None = None,
+    save_path: str | None = None,
+):
+    """Plot the learned nonlinear calibration function f(x) over a dense grid."""
+    model.eval()
+
+    x_min, x_max = float(np.min(x_values)), float(np.max(x_values))
+    x_grid = np.linspace(x_min, x_max, 300).astype(np.float32)
+    x_grid_t = torch.tensor(x_grid, dtype=torch.float32).unsqueeze(1)
+
+    with torch.no_grad():
+        y_grid = model(x_grid_t).squeeze().cpu().numpy()
+
+    fig, ax = plt.subplots(figsize=(8, 5))
+    ax.scatter(x_values, y_values, s=8, alpha=0.4, color="#2c7fb8", label="Data")
+    ax.plot(x_grid, y_grid, color="#d95f02", linewidth=2, label=r"$f(x)$")
+    ax.set_xlabel(x_label)
+    ax.set_ylabel(y_label)
+    ax.set_title(title or "Nonlinear calibration model")
+    ax.grid(alpha=0.3)
+    ax.legend()
+    plt.tight_layout()
+
+    if save_path is None:
+        base_name = "nonlinear_model"
+        if title is not None:
+            safe_title = "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in title)
+            base_name = safe_title.strip("._-") or base_name
+        save_path = os.path.join(single_model_dir, f"{base_name}.png")
+
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+    fig.savefig(save_path, dpi=150, bbox_inches="tight")
+
+    return fig, ax
+
+
 # ---------------------------------  Plot of signal processing ----------------------------
 # ─────────────────────────────────────────────────────────────────────────────
 # Plotting of radargrams, radargrams with static removed and signal of highest energy
@@ -469,7 +529,7 @@ def plot_calibration_models(calibration_models):
     plt.legend()
     plt.grid()
     
-    filename = os.path.join(save_dir,"RegressionModels.png")
+    filename = os.path.join(regression_dir,"RegressionModels.png")
     plt.savefig(filename, dpi=150, bbox_inches="tight")
     wandb.log({"regression_models": wandb.Image(plt)})
     plt.close()
@@ -485,7 +545,7 @@ def plot_calibration_models(calibration_models):
     plt.ylabel("Slope")
     plt.grid()
 
-    filename = os.path.join(save_dir,"Models_Slopes.png")
+    filename = os.path.join(regression_dir,"Models_Slopes.png")
     plt.savefig(filename, dpi=150, bbox_inches="tight")
     plt.close()
 
@@ -583,8 +643,8 @@ for i in range(len(segments)):
     xmin, xmax = X.min(), X.max()
     span = xmax - xmin
 
-    lower = xmin + 0.1 * span
-    upper = xmax - 0.1 * span
+    lower = xmin + 0.03 * span
+    upper = xmax - 0.03 * span
 
     mask = (X >= lower) & (X <= upper)
 
@@ -595,16 +655,12 @@ for i in range(len(segments)):
     # Train model
     # ─────────────────────────────────────
 
-    scaler_X = StandardScaler()
-    scaler_y = StandardScaler()
 
 
     X_trimmed = X[mask].reshape(-1,1)
     y_trimmed = y[mask].reshape(-1,1)
 
 
-    # X_scaled = scaler_X.fit_transform(X_trimmed.reshape(-1,1)).flatten()
-    # y_scaled = scaler_y.fit_transform(y_trimmed.reshape(-1,1)).flatten()
     model = train_model(X_trimmed, y_trimmed, i)
     wandb.watch(model, log="all")
     model_path = os.path.join(save_dir, f"model_segment_{i}.pkl")
@@ -633,25 +689,20 @@ for i in range(len(segments)):
     # ─────────────────────────────────────
     # plot per segment
     # ─────────────────────────────────────
-    x_line = np.linspace(X.min(), X.max(), 100)
-    x_t = torch.tensor(x_line, dtype=torch.float32).unsqueeze(1)
-
-    with torch.no_grad():
-        y_line = model(x_t).squeeze().numpy()
-
-    plt.figure()
-    plt.scatter(X, y, s=2, alpha=0.4)
-    plt.plot(x_line, y_line, color='orange')
-    plt.xlabel("PCA")
-    plt.ylabel("Position in cm")
-    plt.title(f"Segment {i}: Nonlinear PCA → Motor model")
-    
-    filename = os.path.join(save_dir, f"RegressionModel_segment{i}.png")
-    plt.savefig(filename, dpi=150, bbox_inches="tight")
+    filename = os.path.join(single_model_dir, f"RegressionModel_segment{i}.png")
+    fig, ax = plot_nonlinear_model(
+        model=model,
+        x_values=X,
+        y_values=y,
+        x_label="PCA",
+        y_label="Position in cm",
+        title=f"Segment {i}: Nonlinear calibration model f(x)",
+        save_path=filename,
+    )
     wandb.log({
-        f"regression_plot_segment_{i}": wandb.Image(plt)
+        f"regression_plot_segment_{i}": wandb.Image(fig)
     })
-    plt.close()
+    plt.close(fig)
     
     
 #plot_calibration_models(calibration_models)
@@ -759,7 +810,7 @@ for i, calibration in enumerate(calibration_models):
         plt.legend()
         plt.grid()
 
-        filename = os.path.join(save_dir, f"cal_{i}_test_{j}.png")
+        filename = os.path.join(cal_test_dir, f"cal_{i}_test_{j}.png")
         plt.savefig(filename, dpi=150, bbox_inches="tight")
         wandb.log({
             f"prediction_plot_cal{i}_test{j}": wandb.Image(plt)
@@ -778,7 +829,7 @@ plt.xlabel("Test segment")
 plt.ylabel("Calibration segment")
 plt.title("Calibration Transfer Matrix")
 
-filename = os.path.join(save_dir, "calibration_matrix.png")
+filename = os.path.join(cal_matrix_dir, "calibration_matrix.png")
 plt.savefig(filename, dpi=150, bbox_inches="tight")
 wandb.log({
     "calibration_matrix": wandb.Image(plt)

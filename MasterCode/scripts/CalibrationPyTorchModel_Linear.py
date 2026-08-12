@@ -28,10 +28,18 @@ wandb.init(
 # Calibrate and rnd Movement
 #Both done in one measurement
 RADAR = "Data/RadarTest/radar_20260729_145247.npz"
-MOTOR = "Data/TimeLogs/time_log_20260729_145342.json"  
+MOTOR = "Data/TimeLogs/time_log_20260729_altered.json"  
 
-save_dir = "Data/calibration_plots/SegmentationWandB_Linear"
-os.makedirs(save_dir, exist_ok=True)
+save_dir = "Data/calibration_plots/SegmentationWandB_Linear/00"
+
+motor_pca_dir = os.path.join(save_dir, "Motor_vs_PCA")
+regression_dir = os.path.join(save_dir, "RegressionModels")
+single_reg_dir = os.path.join(save_dir, "RegressionModel_per_segment")
+cal_test_dir = os.path.join(save_dir, "Calibration_vs_Test")
+cal_matrix_dir = os.path.join(save_dir, "Calibration_Matrix")
+
+for d in [motor_pca_dir, regression_dir, single_reg_dir, cal_test_dir, cal_matrix_dir]:
+    os.makedirs(d, exist_ok=True)
 # ══════════════════════════════════════════════════════════════════════════════
 # ══════════════════════════════════════════════════════════════════════════════
 MOTOR_EPOCH: datetime.datetime | None = None
@@ -304,6 +312,11 @@ def train_model(X, y, segment_id, epochs=1000, lr=1e-1):
 
     model = MotorNet().to(device)
 
+    patience = 50
+    counter = 0
+    min_delta = 1e-6
+
+
     X_t = torch.tensor(X, dtype=torch.float32).to(device)
     y_t = torch.tensor(y, dtype=torch.float32).to(device)
 
@@ -321,6 +334,12 @@ def train_model(X, y, segment_id, epochs=1000, lr=1e-1):
         loss.backward()
         optimizer.step()
 
+
+        if prev_loss - loss.item() < min_delta:
+            counter += 1
+        else:
+            counter = 0
+
         # Log to W&B
         if epoch % 50 == 0:
             wandb.log({
@@ -328,11 +347,10 @@ def train_model(X, y, segment_id, epochs=1000, lr=1e-1):
             "epoch": epoch
             })
 
-        if prev_loss is not None:
-            if abs(prev_loss - loss.item()) < 1e-10:
-                print("Converged at epoch", epoch)
-                print(f"Final loss: {loss.item():.6f}")
-                break
+        if counter >= patience:
+            print(f"Early stopping at epoch {epoch}")
+            print(f"Final loss: {loss.item():.6f}")
+            break
 
         prev_loss = loss.item()
 
@@ -463,7 +481,7 @@ def plot_calibration_models(calibration_models):
     plt.legend()
     plt.grid()
     
-    filename = os.path.join(save_dir,"RegressionModels.png")
+    filename = os.path.join(regression_dir,"RegressionModels.png")
     plt.savefig(filename, dpi=150, bbox_inches="tight")
     wandb.log({"regression_models": wandb.Image(plt)})
     plt.close()
@@ -479,7 +497,7 @@ def plot_calibration_models(calibration_models):
     plt.ylabel("Slope")
     plt.grid()
 
-    filename = os.path.join(save_dir,"Models_Slopes.png")
+    filename = os.path.join(regression_dir,"Models_Slopes.png")
     plt.savefig(filename, dpi=150, bbox_inches="tight")
     plt.close()
 
@@ -585,21 +603,27 @@ for i in range(len(segments)):
     X_trimmed = X[mask].reshape(-1, 1)
     y_trimmed = y[mask]
 
+
+    # ─────────────────────────────────────
+    # Downsample static regions (FIXED)
+    # ─────────────────────────────────────
+    dy = np.abs(np.diff(y_trimmed, prepend=y_trimmed[0]))
+
+    motion_mask = dy > 1e-4
+    keep_mask = motion_mask.copy()
+
+    # keep every 10th static sample
+    keep_mask[~motion_mask] = np.arange(len(y_trimmed))[~motion_mask] % 30 == 0
+
+    X_filtered = X_trimmed[keep_mask].reshape(-1,1)
+    y_filtered = y_trimmed[keep_mask].reshape(-1,1)
     # ─────────────────────────────────────
     # Train model
     # ─────────────────────────────────────
 
-    scaler_X = StandardScaler()
-    scaler_y = StandardScaler()
+    
 
-
-    X_trimmed = X[mask].reshape(-1,1)
-    y_trimmed = y[mask].reshape(-1,1)
-
-
-    # X_scaled = scaler_X.fit_transform(X_trimmed.reshape(-1,1)).flatten()
-    # y_scaled = scaler_y.fit_transform(y_trimmed.reshape(-1,1)).flatten()
-    model = train_model(X_trimmed, y_trimmed, i)
+    model = train_model(X_filtered, y_filtered, i)
     wandb.watch(model, log="all")
     model_path = os.path.join(save_dir, f"model_segment_{i}.pkl")
 
@@ -642,13 +666,13 @@ for i in range(len(segments)):
         y_line = model(x_t).squeeze().numpy()
 
     plt.figure()
-    plt.scatter(X, y, s=2, alpha=0.4)
+    plt.scatter(X_filtered, y_filtered, s=2, alpha=0.4)
     plt.plot(x_line, y_line, color='orange')
     plt.xlabel("PCA")
     plt.ylabel("Position in cm")
     plt.title(f"Segment {i}: Slope = {slope:.3f}; Intercept = {intercept:.3f} ")
     
-    filename = os.path.join(save_dir, f"RegressionModel_segment{i}.png")
+    filename = os.path.join(single_reg_dir, f"RegressionModel_segment{i}.png")
     plt.savefig(filename, dpi=150, bbox_inches="tight")
     wandb.log({
         f"regression_plot_segment_{i}": wandb.Image(plt)
@@ -761,7 +785,7 @@ for i, calibration in enumerate(calibration_models):
         plt.legend()
         plt.grid()
 
-        filename = os.path.join(save_dir, f"cal_{i}_test_{j}.png")
+        filename = os.path.join(cal_test_dir, f"cal_{i}_test_{j}.png")
         plt.savefig(filename, dpi=150, bbox_inches="tight")
         wandb.log({
             f"prediction_plot_cal{i}_test{j}": wandb.Image(plt)
@@ -780,7 +804,7 @@ plt.xlabel("Test segment")
 plt.ylabel("Calibration segment")
 plt.title("Calibration Transfer Matrix")
 
-filename = os.path.join(save_dir, "calibration_matrix.png")
+filename = os.path.join(cal_matrix_dir, "calibration_matrix.png")
 plt.savefig(filename, dpi=150, bbox_inches="tight")
 wandb.log({
     "calibration_matrix": wandb.Image(plt)

@@ -560,17 +560,30 @@ for i in range(len(segments)):
 
     mask = (X >= lower) & (X <= upper)
 
-    X_trimmed = X[mask].reshape(-1, 1)
+    X_trimmed = X[mask]
     y_trimmed = y[mask]
 
+    # ─────────────────────────────────────
+    # Downsample static regions (FIXED)
+    # ─────────────────────────────────────
+    dy = np.abs(np.diff(y_trimmed, prepend=y_trimmed[0]))
+
+    motion_mask = dy > 1e-4
+    keep_mask = motion_mask.copy()
+
+    # keep every 10th static sample
+    keep_mask[~motion_mask] = np.arange(len(y_trimmed))[~motion_mask] % 30 == 0
+
+    X_filtered = X_trimmed[keep_mask].reshape(-1,1)
+    y_filtered = y_trimmed[keep_mask].reshape(-1,1)
     # ─────────────────────────────────────
     # Train model
     # ─────────────────────────────────────
     model = LinearRegression()
-    model.fit(X_trimmed, y_trimmed)
+    model.fit(X_filtered, y_filtered)
 
-    slope = model.coef_[0]
-    intercept = model.intercept_
+    slope = model.coef_[0, 0]
+    intercept = model.intercept_[0]
 
     print(f"slope: {slope:.4f}, intercept: {intercept:.4f}")
 
@@ -592,7 +605,7 @@ for i in range(len(segments)):
     y_line = model.predict(x_line.reshape(-1, 1))
 
     plt.figure()
-    plt.scatter(X, y, s=2, alpha=0.4)
+    plt.scatter(X_filtered, y_filtered, s=2, alpha=0.4)
     plt.plot(x_line, y_line, color='orange')
     plt.xlabel("PCA")
     plt.ylabel("Position in cm")
@@ -674,9 +687,7 @@ for i, calibration in enumerate(calibration_models):
         # -------------------------------
         # Prediction
         # -------------------------------
-        y_pred = model.predict(
-            pc1_test.reshape(-1,1)
-        )
+        y_pred = model.predict(pc1_test.reshape(-1,1)).ravel()
         y_interp = np.interp( t_motor, t_radar, y_pred)
         
         
