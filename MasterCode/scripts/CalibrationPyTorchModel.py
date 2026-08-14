@@ -236,7 +236,8 @@ def align_motor_to_radar(
 # ─────────────────────────────────────────────────────────────────────────────
 # Plot Motor vs. PCA
 # ─────────────────────────────────────────────────────────────────────────────
-def plot_pca_vs_motor(
+def plot_motor_vs_pca(
+    segment,
     radar_times_sec: np.ndarray,
     pca_values: np.ndarray,          # shape (Timeframes,) — first PC or any scalar
     motor_times_aligned: np.ndarray,
@@ -244,8 +245,8 @@ def plot_pca_vs_motor(
     pca_label: str = "PC 1",
     position_unit: str = "position",
 ) -> None:
-    fig_M_vs_PCA, ax1 = plt.subplots(figsize=(14, 5))
-    fig_M_vs_PCA.patch.set_facecolor("#f8f8f8")
+    fig, ax1 = plt.subplots(figsize=(14, 5))
+    fig.patch.set_facecolor("#f8f8f8")
     ax1.set_facecolor("#f8f8f8")
 
     # ── PCA (left axis) ──────────────────────────────────────────────────────
@@ -264,7 +265,7 @@ def plot_pca_vs_motor(
 
     #
     # build dense interpolated motor signal
-    t_dense = np.linspace(motor_times_aligned[0], motor_times_aligned[-1], len(radar_times_sec))
+    t_dense = np.linspace(motor_times_aligned[0], motor_times_aligned[-1], 1000)
     y_dense = np.interp(t_dense, motor_times_aligned, motor_positions)
     ax2.plot(t_dense, y_dense, color=color_motor, lw=2.2, label="Motor position", zorder=4, alpha=0.5)
 
@@ -273,11 +274,6 @@ def plot_pca_vs_motor(
                 color=color_motor, s=25, zorder=5)
 
     ax2.tick_params(axis="y", labelcolor=color_motor)
-
-    # tidy y-ticks: one tick per known position, labelled with action name
-    sorted_actions = sorted(ACTION_MAP.items(), key=lambda kv: kv[1])
-    # ax2.set_yticks([v for _, v in sorted_actions])
-    # ax2.set_yticklabels([k for k, _ in sorted_actions], fontsize=9)
     ax2.yaxis.set_major_locator(ticker.AutoLocator())
 
     # ── Legend ────────────────────────────────────────────────────────────────
@@ -287,10 +283,10 @@ def plot_pca_vs_motor(
 
     plt.title("PCA  vs  Motor Position  (aligned to t = 0)", fontsize=13, pad=10)
     plt.tight_layout()
-    plt.savefig(os.path.join(motor_pca_dir, "pca_vs_motor.png"), dpi=150, bbox_inches="tight")
-    print("Saved → pca_vs_motor.png")
-    plt.show()
-
+    filename = os.path.join(motor_pca_dir, f"Motor_vs_PCA_segment{segment}.png")
+    plt.savefig(filename, dpi=150, bbox_inches="tight")
+    plt.close()
+    
 # ─────────────────────────────────────────────────────────────────────────────
 # PyTorch Model
 # ─────────────────────────────────────────────────────────────────────────────
@@ -302,17 +298,19 @@ class MotorNet(nn.Module):
         super().__init__()
 
         self.network = nn.Sequential(
-            nn.Linear(1,16),
+            nn.Linear(1, 64),      # Increase hidden size
             nn.Tanh(),
-            nn.Linear(16,16),
+            nn.Linear(64, 64),
             nn.Tanh(),
-            nn.Linear(16,1)
+            nn.Linear(64, 32),
+            nn.Tanh(),
+            nn.Linear(32, 1)
         )
 
     def forward(self, x):
         return self.network(x)
 
-def train_model(X, y, segment_id, epochs=2000, lr=1e-3):
+def train_model(X, y, segment_id, epochs=5000, lr=1e-3):
     torch.manual_seed(0)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -325,7 +323,7 @@ def train_model(X, y, segment_id, epochs=2000, lr=1e-3):
     loss_fn = nn.MSELoss()
     prev_loss = float("inf")  # or None
 
-    patience = 50
+    patience = 200
     counter = 0
     min_delta = 1e-7
 
@@ -607,12 +605,12 @@ for i in range(len(segments)):
     pca = op(M_centered)[0]
     pc1 = pca[:, 0].numpy()
 
-    # plot_motor_vs_pca(pca_values=pc1,
-    #                   motor_times_aligned=motor_times,
-    #                   motor_positions=motor_positions,
-    #                   radar_times_sec=radar_times,
-    #                   segment=i
-    #                   )
+    plot_motor_vs_pca(pca_values=pc1,
+                      motor_times_aligned=motor_times,
+                      motor_positions=motor_positions,
+                      radar_times_sec=radar_times,
+                      segment=i
+                      )
 
     all_segments.append({
         "segment": i,
@@ -651,17 +649,28 @@ for i in range(len(segments)):
     X_trimmed = X[mask].reshape(-1, 1)
     y_trimmed = y[mask]
 
+
+    # ─────────────────────────────────────
+    # Downsample static regions (FIXED)
+    # ─────────────────────────────────────
+    dy = np.abs(np.diff(y_trimmed, prepend=y_trimmed[0]))
+
+    motion_mask = dy > 1e-4
+    keep_mask = motion_mask.copy()
+
+    # keep every 10th static sample
+    keep_mask[~motion_mask] = np.arange(len(y_trimmed))[~motion_mask] % 30 == 0
+
+    X_filtered = X_trimmed[keep_mask].reshape(-1,1)
+    y_filtered = y_trimmed[keep_mask].reshape(-1,1)
+
     # ─────────────────────────────────────
     # Train model
     # ─────────────────────────────────────
 
 
 
-    X_trimmed = X[mask].reshape(-1,1)
-    y_trimmed = y[mask].reshape(-1,1)
-
-
-    model = train_model(X_trimmed, y_trimmed, i)
+    model = train_model(X_filtered, y_filtered, i)
     wandb.watch(model, log="all")
     model_path = os.path.join(save_dir, f"model_segment_{i}.pkl")
 
@@ -673,7 +682,7 @@ for i in range(len(segments)):
     # Log training metrics
     wandb.log({
         "segment": i,
-        "num_samples": len(X_trimmed)
+        "num_samples": len(X_filtered)
     })
 
 
@@ -692,8 +701,8 @@ for i in range(len(segments)):
     filename = os.path.join(single_model_dir, f"RegressionModel_segment{i}.png")
     fig, ax = plot_nonlinear_model(
         model=model,
-        x_values=X,
-        y_values=y,
+        x_values=X_filtered,
+        y_values=y_filtered,
         x_label="PCA",
         y_label="Position in cm",
         title=f"Segment {i}: Nonlinear calibration model f(x)",

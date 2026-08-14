@@ -1,6 +1,7 @@
 Code/
 Data/
 venv/
+RadarEnv/
 wandb/
 MasterCode/__pycache__/
 MasterCode/.vscode/
