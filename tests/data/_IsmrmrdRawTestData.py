@@ -1,0 +1,430 @@
+"""Create ismrmrd datasets."""
+
+from pathlib import Path
+from typing import Literal
+
+import ismrmrd
+import ismrmrd.xsd
+import torch
+from einops import repeat
+from mrpro.data import SpatialDimension
+from mrpro.phantoms import EllipsePhantom
+from mrpro.utils import RandomGenerator
+
+ISMRMRD_TRAJECTORY_TYPE = (
+    'cartesian',
+    'epi',
+    'radial',
+    'goldenangle',
+    'spiral',
+    'other',
+)
+
+
+class IsmrmrdRawTestData:
+    """Raw data in ISMRMRD format for testing.
+
+    This is based on
+    https://github.com/ismrmrd/ismrmrd-python-tools/blob/master/generate_cartesian_shepp_logan_dataset.py
+    """
+
+    def __init__(
+        self,
+        filename: str | Path,
+        matrix_size: int = 64,
+        n_coils: int = 4,
+        oversampling: int = 2,
+        repetitions: int = 1,
+        flag_invalid_reps: bool = False,
+        acceleration: int = 1,
+        noise_level: float = 0.00005,
+        trajectory_type: Literal['cartesian', 'radial'] = 'cartesian',
+        sampling_order: Literal['linear', 'low_high', 'high_low', 'random'] = 'linear',
+        phantom: EllipsePhantom | None = None,
+        add_bodycoil_acquisitions: bool = False,
+        n_separate_calibration_lines: int = 0,
+        discard_pre: int = 0,
+        discard_post: int = 0,
+        vendor: Literal['Siemens', 'OSI2'] = 'Siemens',
+    ):
+        """Initialize IsmrmrdRawTestData.
+
+        Parameters
+        ----------
+        filename
+            full path and filename
+        matrix_size
+            size of image matrix
+        n_coils
+            number of coils
+        oversampling
+            oversampling along readout (k0) direction
+        repetitions
+            number of repetitions,
+        flag_invalid_reps
+            flag to indicate that number of phase encoding steps are different for repetitions
+        acceleration
+            undersampling along phase encoding (k1)
+        noise_level
+            scaling factor for noise level
+        trajectory_type
+            cartesian
+        sampling_order
+            order how phase encoding points (k1) are obtained
+        phantom
+            phantom with different ellipses
+        n_separate_calibration_lines
+            number of additional calibration lines, linear Cartesian sampled
+        discard_pre
+            data points to discard at the beginning of the first five readouts
+        discard_post
+            data points to discard at the end of the first five readouts
+        vendor
+            Vendor of the MR scanner
+        """
+        if not phantom:
+            phantom = EllipsePhantom()
+
+        self.filename = filename
+        self.matrix_size = matrix_size
+        self.n_coils = n_coils
+        self.oversampling = oversampling
+        self.repetitions = repetitions
+        self.flag_invalid_reps = flag_invalid_reps
+        self.acceleration = acceleration
+        self.noise_level = noise_level
+        self.trajectory_type = trajectory_type
+        self.sampling_order = sampling_order
+        self.phantom = phantom
+        self.n_separate_calibration_lines = n_separate_calibration_lines
+        self.n_noise_samples = 4
+
+        rng = RandomGenerator(0)
+
+        # The number of points in image space (x,y) and kspace (fe,pe)
+        n_x = self.matrix_size
+        n_y = self.matrix_size
+        n_freq_encoding = self.oversampling * self.matrix_size
+        n_phase_encoding = self.matrix_size
+
+        # Go through all repetitions and create a trajectory and k-space
+        kpe = []
+        true_kspace = []
+        traj_kx = []
+        traj_ky = []
+        for _ in range(self.repetitions):
+            if trajectory_type == 'cartesian':
+                # Create Cartesian grid for k-space locations
+                traj_ky_rep, traj_kx_rep, kpe_rep = self._cartesian_trajectory(
+                    n_phase_encoding,
+                    n_freq_encoding,
+                    acceleration,
+                    sampling_order,
+                )
+            elif trajectory_type == 'radial':
+                # Create uniform radial trajectory
+                traj_ky_rep, traj_kx_rep, kpe_rep = self._radial_trajectory(
+                    n_phase_encoding,
+                    n_freq_encoding,
+                    acceleration,
+                )
+            else:
+                raise ValueError(f'Trajectory type {trajectory_type} not supported.')
+
+            # Create analytic k-space and save trajectory
+            if trajectory_type == 'radial':
+                true_kspace.append(
+                    self.phantom.kspace(traj_ky_rep / oversampling, traj_kx_rep / oversampling) / oversampling
+                )
+            elif trajectory_type == 'cartesian':
+                true_kspace.append(self.phantom.kspace(traj_ky_rep, traj_kx_rep / oversampling) / oversampling)
+            kpe.append(kpe_rep)
+            traj_kx.append(traj_kx_rep)
+            traj_ky.append(traj_ky_rep)
+
+        # Reference image is the same for all repetitions
+        image_dimension = SpatialDimension(z=1, y=n_y, x=n_x)
+        self.img_ref = self.phantom.image_space(image_dimension)
+
+        # Multi-coil acquisition
+        # TODO: proper application of coils
+        true_kspace = [repeat(k, '... -> coils ... ', coils=self.n_coils) for k in true_kspace]
+
+        # Open the dataset
+        dataset = ismrmrd.Dataset(self.filename, 'dataset', create_if_needed=True)
+
+        # Experimental Conditions
+        exp = ismrmrd.xsd.experimentalConditionsType(H1resonanceFrequency_Hz=128000000)
+
+        # Acquisition System Information
+        sys = ismrmrd.xsd.acquisitionSystemInformationType()
+        sys.receiverChannels = self.n_coils
+        sys.systemVendor = vendor
+
+        # Sequence Information
+        seq = ismrmrd.xsd.sequenceParametersType()
+        seq.TR = [89.6]
+        seq.TE = [2.3]
+        seq.TI = [0.0]
+        seq.flipAngle_deg = [12.0]
+        seq.echo_spacing = [5.6]
+        trajectory = self.trajectory_type if self.trajectory_type in ISMRMRD_TRAJECTORY_TYPE else 'other'
+
+        # Encoded and recon spaces
+        if self.trajectory_type == 'radial':
+            encoding_fov = ismrmrd.xsd.fieldOfViewMm(
+                x=self.oversampling * matrix_size, y=self.oversampling * matrix_size, z=5
+            )
+            encoding_matrix = ismrmrd.xsd.matrixSizeType(
+                x=self.oversampling * matrix_size, y=self.oversampling * matrix_size, z=1
+            )
+        else:
+            encoding_fov = ismrmrd.xsd.fieldOfViewMm(x=self.oversampling * matrix_size, y=matrix_size, z=5)
+            encoding_matrix = ismrmrd.xsd.matrixSizeType(x=self.oversampling * matrix_size, y=matrix_size, z=1)
+
+        encoding_space = ismrmrd.xsd.encodingSpaceType(matrixSize=encoding_matrix, fieldOfView_mm=encoding_fov)
+
+        recon_fov = ismrmrd.xsd.fieldOfViewMm(x=matrix_size, y=matrix_size, z=5)
+        recon_matrix = ismrmrd.xsd.matrixSizeType(x=n_x, y=n_y, z=1)
+        recon_space = ismrmrd.xsd.encodingSpaceType(matrixSize=recon_matrix, fieldOfView_mm=recon_fov)
+
+        # Encoding limits
+        limits = ismrmrd.xsd.encodingLimitsType(
+            kspace_encoding_step_1=ismrmrd.xsd.limitType(minimum=0, center=n_y // 2, maximum=n_y - 1),
+            repetition=ismrmrd.xsd.limitType(minimum=0, center=self.repetitions // 2, maximum=self.repetitions - 1),
+        )
+
+        # Encoding
+        encoding = ismrmrd.xsd.encodingType(
+            trajectory=ismrmrd.xsd.trajectoryType(trajectory),
+            encodedSpace=encoding_space,
+            reconSpace=recon_space,
+            encodingLimits=limits,
+        )
+
+        # Create the XML header and write it to the file
+        header = ismrmrd.xsd.ismrmrdHeader(
+            experimentalConditions=exp,
+            acquisitionSystemInformation=sys,
+            sequenceParameters=seq,
+            encoding=[encoding],
+        )
+
+        dataset.write_xml_header(header.toXML('utf-8'))
+
+        # Create an acquisition and reuse it
+        acq = ismrmrd.Acquisition()
+        acq.resize(n_freq_encoding, self.n_coils, trajectory_dimensions=2)
+        acq.version = 1
+        acq.available_channels = self.n_coils
+        acq.center_sample = round(n_freq_encoding / 2)
+        acq.read_dir = (-0.33, 0.38, -0.86)
+        acq.phase_dir = (0.75, 0.66, 0.0)
+        acq.slice_dir = (-0.57, 0.65, 0.5)
+
+        scan_counter = 0
+        time_stamp = 10000
+
+        # Write out a few noise scans
+        for _ in range(self.n_noise_samples):
+            noise = self.noise_level * rng.randn_tensor((self.n_coils, n_freq_encoding), dtype=torch.complex64)
+            # here's where we would make the noise correlated
+            acq.scan_counter = scan_counter
+            acq.acquisition_time_stamp = time_stamp
+            acq.clearAllFlags()
+            acq.setFlag(ismrmrd.ACQ_IS_NOISE_MEASUREMENT)
+            acq.data[:] = noise.numpy()
+            dataset.append_acquisition(acq)
+            scan_counter += 1
+            time_stamp += 2
+
+        # Add acquisitions obtained with a 2-element body coil (e.g. used for adjustment scans)
+        if add_bodycoil_acquisitions:
+            acq.resize(n_freq_encoding, 2, trajectory_dimensions=2)
+            for _ in range(8):
+                data = rng.randn_tensor((2, n_freq_encoding), dtype=torch.complex64)
+                acq.scan_counter = scan_counter
+                acq.acquisition_time_stamp = time_stamp
+                acq.clearAllFlags()
+                acq.data[:] = data.numpy()
+                dataset.append_acquisition(acq)
+                scan_counter += 1
+                time_stamp += 2
+            acq.resize(n_freq_encoding, self.n_coils, trajectory_dimensions=2)
+
+        # Calibration lines
+        if n_separate_calibration_lines > 0:
+            traj_ky_calibration, traj_kx_calibration, kpe_calibration = self._cartesian_trajectory(
+                n_separate_calibration_lines,
+                n_freq_encoding,
+                1,
+                'linear',
+            )
+            kspace_calibration = self.phantom.kspace(traj_ky_calibration, traj_kx_calibration)
+            kspace_calibration = repeat(kspace_calibration, '... -> coils ... ', coils=self.n_coils)
+            kspace_calibration = kspace_calibration + self.noise_level * rng.randn_tensor(
+                (self.n_coils, n_freq_encoding, len(kpe_calibration)), dtype=torch.complex64
+            )
+            if vendor.lower() == 'siemens':
+                # Siemens assumes fft from k-space to image space
+                kspace_calibration = kspace_calibration.conj_physical()
+
+            for pe_idx, pe_pos in enumerate(kpe_calibration):
+                # Set some fields in the header
+                acq.scan_counter = scan_counter
+                acq.acquisition_time_stamp = time_stamp
+
+                # kpe is in the range [-npe//2, npe//2), the ismrmrd kspace_encoding_step_1 is in the range [0, npe)
+                kspace_encoding_step_1 = pe_pos + n_phase_encoding // 2
+                acq.idx.kspace_encode_step_1 = kspace_encoding_step_1
+                acq.clearAllFlags()
+                acq.setFlag(ismrmrd.ACQ_IS_PARALLEL_CALIBRATION)
+
+                # Set the data and append
+                acq.data[:] = kspace_calibration[:, :, pe_idx].numpy()
+                dataset.append_acquisition(acq)
+                scan_counter += 1
+                time_stamp += 2
+
+        # Loop over the repetitions, add noise and write to disk
+        for rep in range(self.repetitions):
+            noise = self.noise_level * rng.randn_tensor(
+                (self.n_coils, n_freq_encoding, len(kpe[rep])), dtype=torch.complex64
+            )
+            # Here's where we would make the noise correlated
+            kspace_with_noise = true_kspace[rep] + noise
+
+            if vendor.lower() == 'siemens':
+                # Siemens assumes fft from k-space to image space
+                kspace_with_noise = kspace_with_noise.conj_physical()
+
+            acq.idx.repetition = rep
+            for pe_idx, pe_pos in enumerate(kpe[rep]):
+                if not self.flag_invalid_reps or rep == 0 or pe_idx < len(kpe[rep]) // 2:  # fewer lines for rep > 0
+                    # Set some fields in the header
+                    acq.scan_counter = scan_counter
+                    acq.acquisition_time_stamp = time_stamp
+
+                    # kpe is in the range [-npe//2, npe//2), the ismrmrd kspace_encoding_step_1 is in the range [0, npe)
+                    kspace_encoding_step_1 = pe_pos + n_phase_encoding // 2
+                    acq.idx.kspace_encode_step_1 = kspace_encoding_step_1
+                    acq.clearAllFlags()
+                    if kspace_encoding_step_1 == 0:
+                        acq.setFlag(ismrmrd.ACQ_FIRST_IN_ENCODE_STEP1)
+                        acq.setFlag(ismrmrd.ACQ_FIRST_IN_SLICE)
+                        acq.setFlag(ismrmrd.ACQ_FIRST_IN_REPETITION)
+                    elif kspace_encoding_step_1 == n_phase_encoding - 1:
+                        acq.setFlag(ismrmrd.ACQ_LAST_IN_ENCODE_STEP1)
+                        acq.setFlag(ismrmrd.ACQ_LAST_IN_SLICE)
+                        acq.setFlag(ismrmrd.ACQ_LAST_IN_REPETITION)
+
+                    # Set trajectory and data
+                    traj = torch.stack((traj_kx[rep][:, pe_idx], traj_ky[rep][:, pe_idx]), dim=1)
+                    if pe_idx < 5:  # add readouts with elements to be discarded
+                        acq.resize(n_freq_encoding + discard_pre + discard_post, self.n_coils, trajectory_dimensions=2)
+                        acq.traj[:] = (
+                            torch.cat((torch.zeros((discard_pre, 2)), traj, torch.zeros((discard_post, 2))))
+                            .numpy()
+                            .astype(float)
+                        )
+                        acq.data[:] = torch.cat(
+                            (
+                                torch.zeros((self.n_coils, discard_pre)),
+                                kspace_with_noise[:, :, pe_idx],
+                                torch.zeros((self.n_coils, discard_post)),
+                            ),
+                            dim=1,
+                        ).numpy()
+                        acq.discard_pre = discard_pre
+                        acq.discard_post = discard_post
+                    else:
+                        acq.resize(n_freq_encoding, self.n_coils, trajectory_dimensions=2)
+                        acq.traj[:] = traj.numpy().astype(float)
+                        acq.data[:] = kspace_with_noise[:, :, pe_idx].numpy()
+                        acq.discard_pre = 0
+                        acq.discard_post = 0
+                    dataset.append_acquisition(acq)
+                    scan_counter += 1
+                    time_stamp += 3
+
+        # Clean up
+        dataset.close()
+
+    @staticmethod
+    def _cartesian_trajectory(
+        n_phase_encoding: int,
+        n_freq_encoding: int,
+        acceleration: int = 1,
+        sampling_order: Literal['linear', 'low_high', 'high_low', 'random'] = 'linear',
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Calculate Cartesian sampling trajectory.
+
+        Parameters
+        ----------
+        n_phase_encoding
+            number of phase encoding points before undersampling
+        n_freq_encoding
+            number of frequency encoding points, including oversampling
+        acceleration
+            undersampling factor
+        sampling_order
+            order how phase encoding points are sampled
+        """
+        # Fully sampled frequency encoding
+        kfe = torch.arange(-n_freq_encoding // 2, n_freq_encoding // 2)
+
+        if sampling_order == 'random':
+            # Linear order of a fully sampled kpe dimension. Undersampling is done later.
+            kpe = torch.arange(0, n_phase_encoding)
+        else:
+            # Always include k-space center and more points on the negative side of k-space
+            kpe_pos = torch.arange(0, n_phase_encoding // 2, acceleration)
+            kpe_neg = -torch.arange(acceleration, n_phase_encoding // 2 + 1, acceleration)
+            kpe = torch.cat((kpe_neg, kpe_pos), dim=0)
+
+        # Different temporal orders of phase encoding points
+        if sampling_order == 'random':
+            perm = RandomGenerator(13).randperm(len(kpe))
+            kpe = kpe[perm[: len(perm) // acceleration]]
+        elif sampling_order == 'linear':
+            kpe, _ = torch.sort(kpe)
+        elif sampling_order == 'low_high':
+            idx = torch.argsort(torch.abs(kpe), stable=True)
+            kpe = kpe[idx]
+        elif sampling_order == 'high_low':
+            idx = torch.argsort(-torch.abs(kpe), stable=True)
+            kpe = kpe[idx]
+        else:
+            raise ValueError(f'sampling order {sampling_order} not supported.')
+
+        # Combine frequency and phase encoding
+        traj_ky, traj_kx = torch.meshgrid(kpe, kfe, indexing='xy')
+        return traj_ky, traj_kx, kpe
+
+    @staticmethod
+    def _radial_trajectory(
+        n_phase_encoding: int,
+        n_freq_encoding: int,
+        acceleration: int = 1,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Calculate radial sampling trajectory.
+
+        Parameters
+        ----------
+        n_phase_encoding
+            number of phase encoding points before undersampling, defines the number of angles
+        n_freq_encoding
+            number of frequency encoding points, defines the sampling along each radial line
+        acceleration
+            undersampling factor
+        """
+        # Fully sampled frequency encoding (sorting of ISMRMD is x,y,z)
+        kfe = repeat(torch.arange(-n_freq_encoding // 2, n_freq_encoding // 2), 'k0 -> k0 k1', k1=1)
+
+        # Uniform angular sampling (sorting of ISMRMD is x,y,z)
+        kpe = torch.linspace(0, n_phase_encoding - 1, n_phase_encoding // acceleration, dtype=torch.int32)
+        kang = repeat(kpe * (torch.pi / len(kpe)), 'k1 -> k0 k1', k0=1)
+
+        traj_ky = torch.sin(kang) * kfe
+        traj_kx = torch.cos(kang) * kfe
+        return traj_ky, traj_kx, kpe

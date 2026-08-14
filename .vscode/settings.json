@@ -1,0 +1,20 @@
+{
+    "autoDocstring.docstringFormat": "numpy-notypes",
+    "python.testing.unittestArgs": [
+        "-v",
+        "-s",
+        "./tests",
+        "-p",
+        "test_*.py"
+    ],
+    "[python]": {
+        "editor.defaultFormatter": "charliermarsh.ruff",
+        "editor.formatOnSave": true
+    },
+    "python.testing.pytestArgs": [
+        "tests",
+        "-m not cuda"
+    ],
+    "python.testing.unittestEnabled": false,
+    "python.testing.pytestEnabled": true,
+}
