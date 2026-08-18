@@ -314,6 +314,16 @@ def rmse(y_true, y_pred):
     rmse = np.sqrt(mse)
     return rmse
 
+def mae(y_true, y_pred):
+    """Calculate mean absolute error between y_true and y_pred."""
+    mae = np.mean(np.abs(y_true - y_pred))
+    return mae
+
+def max_abs_error(y_true, y_pred):
+    """Calculate maximum absolute error between y_true and y_pred."""
+    max_error = np.max(np.abs(y_true - y_pred))
+    return max_error
+
 
 # ---------------------------------  Plot of signal processing ----------------------------
 # ─────────────────────────────────────────────────────────────────────────────
@@ -618,11 +628,26 @@ for seg in segments[:6]:
     X_trimmed = X[mask].reshape(-1, 1)
     y_trimmed = y[mask]
 
-    model = LinearRegression()
-    model.fit(X_trimmed, y_trimmed)
 
-    slope = model.coef_[0]
-    intercept = model.intercept_
+    # ─────────────────────────────────────
+    # Downsample static regions (FIXED)
+    # ─────────────────────────────────────
+    dy = np.abs(np.diff(y_trimmed, prepend=y_trimmed[0]))
+
+    motion_mask = dy > 1e-4
+    keep_mask = motion_mask.copy()
+
+    # keep every 10th static sample
+    keep_mask[~motion_mask] = np.arange(len(y_trimmed))[~motion_mask] % 30 == 0
+
+    X_filtered = X_trimmed[keep_mask].reshape(-1,1)
+    y_filtered = y_trimmed[keep_mask].reshape(-1,1)
+
+    model = LinearRegression()
+    model.fit(X_filtered, y_filtered)
+
+    slope = model.coef_[0, 0]
+    intercept = model.intercept_[0]
 
     print(f"\n--- Segment {seg['segment']} ---")
     print(f"slope: {slope:.4f}, intercept: {intercept:.4f}")
@@ -662,9 +687,17 @@ n_calibration = len(calibration_models)
 print(n_segments)
 print(n_calibration)
 
-calibration_matrix = np.zeros(
-    (n_calibration, n_segments)
+calibration_matrix_rmse = np.zeros(
+    (n_segments, n_segments)
 )
+calibration_matrix_mae = np.zeros(
+    (n_segments, n_segments)
+)
+calibration_matrix_max_error = np.zeros(
+    (n_segments, n_segments)
+)
+
+
 
 
 for i, calibration in enumerate(calibration_models):
@@ -692,14 +725,19 @@ for i, calibration in enumerate(calibration_models):
         # Prediction
         # -------------------------------
         y_pred = model.predict(pc1_test.reshape(-1,1))
-        y_interp = np.interp( t_motor, t_radar, y_pred)
+        y_interp = np.interp( t_motor, t_radar, y_pred.squeeze())
         
         
         # -------------------------------
         # RMSE and Plots
         # -------------------------------
-        error = rmse(y_motor, y_interp)
-        calibration_matrix[i, j] = error
+        error_rmse = rmse(y_motor, y_interp)
+        error_mae = mae(y_motor, y_interp)
+        error_max = max_abs_error(y_motor, y_interp)
+
+        calibration_matrix_rmse[i, j] = error_rmse
+        calibration_matrix_mae[i, j] = error_mae
+        calibration_matrix_max_error[i, j] = error_max
 
 
         plt.figure(figsize=(10,5))
@@ -712,7 +750,7 @@ for i, calibration in enumerate(calibration_models):
         plt.ylabel("Motor displacement (cm)")
 
         plt.title(
-            f"Cal {i} → Test {j} | RMSE = {error:.4f}"
+            f"Cal {i} → Test {j} | RMSE = {error_rmse:.4f}"
         )
 
         plt.legend()
@@ -730,19 +768,69 @@ for i, calibration in enumerate(calibration_models):
 
 
 
-print(calibration_matrix.shape)
+# ─────────────────────────────────────
+# Plot and save RMSE calibration matrix
+# ─────────────────────────────────────
 plt.figure(figsize=(7,6))
 
-plt.imshow(calibration_matrix[:6,:], aspect="auto")
-
+plt.imshow(
+    calibration_matrix_rmse[:6, :],
+    aspect="auto"
+)
 plt.colorbar(label="RMSE")
 plt.xlabel("Test segment")
 plt.ylabel("Calibration segment")
-plt.title("Calibration Transfer Matrix")
+plt.title("Calibration Transfer Matrix - RMSE")
 
-filename = os.path.join(cal_matrix_dir, "calibration_matrix.png")
+filename = os.path.join(cal_matrix_dir, "calibration_matrix_rmse.png")
 plt.savefig(filename, dpi=150, bbox_inches="tight")
-plt.show()
+# wandb.log({
+#     "calibration_matrix_rmse": wandb.Image(plt)
+# })
+plt.close()
+
+# ─────────────────────────────────────
+# Plot and save MAE calibration matrix
+# ─────────────────────────────────────
+plt.figure(figsize=(7,6))
+
+plt.imshow(
+    calibration_matrix_mae[:6, :],
+    aspect="auto"
+)
+plt.colorbar(label="MAE")
+plt.xlabel("Test segment")
+plt.ylabel("Calibration segment")
+plt.title("Calibration Transfer Matrix - MAE")
+
+filename = os.path.join(cal_matrix_dir, "calibration_matrix_mae.png")
+plt.savefig(filename, dpi=150, bbox_inches="tight")
+# wandb.log({
+#     "calibration_matrix_mae": wandb.Image(plt)
+# })
+plt.close()
+
+# ─────────────────────────────────────
+# Plot and save Max Error calibration matrix
+# ─────────────────────────────────────
+plt.figure(figsize=(7,6))
+
+plt.imshow(
+    calibration_matrix_max_error[:6, :],
+    aspect="auto"
+)
+plt.colorbar(label="Max Abs Error")
+plt.xlabel("Test segment")
+plt.ylabel("Calibration segment")
+plt.title("Calibration Transfer Matrix - Max Absolute Error")
+
+filename = os.path.join(cal_matrix_dir, "calibration_matrix_max_error.png")
+plt.savefig(filename, dpi=150, bbox_inches="tight")
+# wandb.log({
+#     "calibration_matrix_max_error": wandb.Image(plt)
+# })
+plt.close()
+
 # ─────────────────────────────────────
 
 

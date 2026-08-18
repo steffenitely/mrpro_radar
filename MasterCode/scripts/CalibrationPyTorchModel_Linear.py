@@ -28,7 +28,7 @@ wandb.init(
 # Calibrate and rnd Movement
 #Both done in one measurement
 RADAR = "Data/RadarTest/radar_20260729_145247.npz"
-MOTOR = "Data/TimeLogs/time_log_20260729_altered.json"  
+MOTOR = "Data/TimeLogs/time_log_20260729_145342.json"  
 
 save_dir = "Data/calibration_plots/SegmentationWandB_Linear/00"
 
@@ -447,6 +447,16 @@ def rmse(y_true, y_pred):
     rmse = np.sqrt(mse)
     return rmse
 
+def mae(y_true, y_pred):
+    """Calculate mean absolute error between y_true and y_pred."""
+    mae = np.mean(np.abs(y_true - y_pred))
+    return mae
+
+def max_abs_error(y_true, y_pred):
+    """Calculate maximum absolute error between y_true and y_pred."""
+    max_error = np.max(np.abs(y_true - y_pred))
+    return max_error
+
 
 # ---------------------------------  Plot of signal processing ----------------------------
 # ─────────────────────────────────────────────────────────────────────────────
@@ -659,7 +669,8 @@ for i in range(len(segments)):
     # ─────────────────────────────────────
     # plot per segment
     # ─────────────────────────────────────
-    x_line = np.linspace(X.min(), X.max(), 100)
+    #x_line = np.linspace(X.min(), X.max(), 100)
+    x_line = np.linspace(-0.065, 0.065, 500)  # fixed range for all segments
     x_t = torch.tensor(x_line, dtype=torch.float32).unsqueeze(1)
 
     with torch.no_grad():
@@ -668,6 +679,7 @@ for i in range(len(segments)):
     plt.figure()
     plt.scatter(X_filtered, y_filtered, s=2, alpha=0.4)
     plt.plot(x_line, y_line, color='orange')
+    plt.ylim(0, 3)
     plt.xlabel("PCA")
     plt.ylabel("Position in cm")
     plt.title(f"Segment {i}: Slope = {slope:.3f}; Intercept = {intercept:.3f} ")
@@ -687,7 +699,13 @@ plot_calibration_models(calibration_models)
 # ─────────────────────────────────────
 n_segments = len(all_segments)
 
-calibration_matrix = np.zeros(
+calibration_matrix_rmse = np.zeros(
+    (n_segments, n_segments)
+)
+calibration_matrix_mae = np.zeros(
+    (n_segments, n_segments)
+)
+calibration_matrix_max_error = np.zeros(
     (n_segments, n_segments)
 )
 
@@ -751,11 +769,15 @@ for i, calibration in enumerate(calibration_models):
 
         y_interp = np.interp( t_motor, t_radar, y_pred)
 
-        error = rmse(y_motor, y_interp)
-        
+        error_rmse = rmse(y_motor, y_interp)
+        error_mae = mae(y_motor, y_interp)
+        error_max = max_abs_error(y_motor, y_interp)
+
         wandb.log({
             f"prediction_plot_cal{i}_test{j}": wandb.Image(plt),
-            "rmse": error
+            "rmse": error_rmse,
+            "mae": error_mae,
+            "max_error": error_max
         })
 
         model_path = os.path.join(save_dir, f"model_segment_{i}.pt")
@@ -766,7 +788,9 @@ for i, calibration in enumerate(calibration_models):
         # RMSE and Plots
         # -------------------------------
         
-        calibration_matrix[i, j] = error
+        calibration_matrix_rmse[i, j] = error_rmse
+        calibration_matrix_mae[i, j] = error_mae
+        calibration_matrix_max_error[i, j] = error_max
 
 
         plt.figure(figsize=(10,5))
@@ -779,7 +803,7 @@ for i, calibration in enumerate(calibration_models):
         plt.ylabel("Motor displacement (cm)")
 
         plt.title(
-            f"Cal {i} → Test {j} | RMSE = {error:.4f}"
+            f"Cal {i} → Test {j} | RMSE = {error_rmse:.4f}"
         )
 
         plt.legend()
@@ -793,21 +817,66 @@ for i, calibration in enumerate(calibration_models):
         plt.close()
 
 
+# ─────────────────────────────────────
+# Plot and save RMSE calibration matrix
+# ─────────────────────────────────────
 plt.figure(figsize=(7,6))
 
 plt.imshow(
-    calibration_matrix[:6, :],
+    calibration_matrix_rmse[:6, :],
     aspect="auto"
 )
-plt.colorbar(label="RMSE")
+plt.colorbar(label="RMSE in mm")
 plt.xlabel("Test segment")
 plt.ylabel("Calibration segment")
-plt.title("Calibration Transfer Matrix")
+plt.title("Calibration Transfer Matrix - RMSE")
 
-filename = os.path.join(cal_matrix_dir, "calibration_matrix.png")
+filename = os.path.join(cal_matrix_dir, "calibration_matrix_rmse.png")
 plt.savefig(filename, dpi=150, bbox_inches="tight")
 wandb.log({
-    "calibration_matrix": wandb.Image(plt)
+    "calibration_matrix_rmse": wandb.Image(plt)
+})
+plt.close()
+
+# ─────────────────────────────────────
+# Plot and save MAE calibration matrix
+# ─────────────────────────────────────
+plt.figure(figsize=(7,6))
+
+plt.imshow(
+    calibration_matrix_mae[:6, :],
+    aspect="auto"
+)
+plt.colorbar(label="MAE in mm")
+plt.xlabel("Test segment")
+plt.ylabel("Calibration segment")
+plt.title("Calibration Transfer Matrix - MAE")
+
+filename = os.path.join(cal_matrix_dir, "calibration_matrix_mae.png")
+plt.savefig(filename, dpi=150, bbox_inches="tight")
+wandb.log({
+    "calibration_matrix_mae": wandb.Image(plt)
+})
+plt.close()
+
+# ─────────────────────────────────────
+# Plot and save Max Error calibration matrix
+# ─────────────────────────────────────
+plt.figure(figsize=(7,6))
+
+plt.imshow(
+    calibration_matrix_max_error[:6, :],
+    aspect="auto"
+)
+plt.colorbar(label="Max Abs Error in mm")
+plt.xlabel("Test segment")
+plt.ylabel("Calibration segment")
+plt.title("Calibration Transfer Matrix - Max Absolute Error")
+
+filename = os.path.join(cal_matrix_dir, "calibration_matrix_max_error.png")
+plt.savefig(filename, dpi=150, bbox_inches="tight")
+wandb.log({
+    "calibration_matrix_max_error": wandb.Image(plt)
 })
 plt.close()
 
