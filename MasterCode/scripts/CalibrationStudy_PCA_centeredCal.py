@@ -767,6 +767,58 @@ for i, calibration in enumerate(calibration_models):
         plt.close()
 
 
+# ─────────────────────────────────────
+# Plot combined movement for test segments 7–13
+# ─────────────────────────────────────
+aggregate_calibration_segment = 1
+aggregate_model = next(
+    calibration["model"]
+    for calibration in calibration_models
+    if calibration["segment"] == aggregate_calibration_segment
+)
+
+aggregate_times = []
+aggregate_true = []
+aggregate_predicted = []
+
+for test in segments:
+    if 7 <= test["segment"] <= 13:
+        y_pred = aggregate_model.predict(test["pc1"].reshape(-1, 1)).squeeze()
+        y_interp = np.interp(
+            test["motor_times"],
+            test["radar_times"],
+            y_pred,
+        )
+
+        aggregate_times.append(test["motor_times"])
+        aggregate_true.append(test["motor_positions"] / 2000)
+        aggregate_predicted.append(y_interp)
+
+if aggregate_times:
+    aggregate_times = np.concatenate(aggregate_times)
+    aggregate_true = np.concatenate(aggregate_true)
+    aggregate_predicted = np.concatenate(aggregate_predicted)
+
+    plt.figure(figsize=(12, 5))
+    plt.plot(aggregate_times, aggregate_true, label="True motor movement", linewidth=2)
+    plt.plot(
+        aggregate_times,
+        aggregate_predicted,
+        label=f"Predicted movement (calibration segment {aggregate_calibration_segment})",
+        color="orange",
+        alpha=0.85,
+    )
+    plt.xlabel("Time (s)")
+    plt.ylabel("Motor displacement (cm)")
+    plt.title("Combined prediction for test segments 7–13")
+    plt.legend()
+    plt.grid()
+
+    filename = os.path.join(cal_test_dir, "combined_segments_7_13.png")
+    plt.savefig(filename, dpi=150, bbox_inches="tight")
+    plt.close()
+
+
 
 # ─────────────────────────────────────
 # Plot and save RMSE calibration matrix
@@ -830,6 +882,10 @@ plt.savefig(filename, dpi=150, bbox_inches="tight")
 #     "calibration_matrix_max_error": wandb.Image(plt)
 # })
 plt.close()
+
+print("mean RMSE:", np.mean(calibration_matrix_rmse[:6, :]))
+print("mean MAE:", np.mean(calibration_matrix_mae[:6, :]))
+print("mean Max Error:", np.mean(calibration_matrix_max_error[:6, :]))
 
 # ─────────────────────────────────────
 

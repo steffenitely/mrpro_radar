@@ -7,17 +7,18 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import mean_squared_error
 import datetime
 from sklearn.linear_model import LinearRegression
+from mrpro.operators.PCACompressionOp import PCACompressionOp
 import torch
 import os
 import wandb
 
 wandb.init(
-    project="radar-motor-nonlinear-TorchModel-RawData",
+    project="radar-motor-ApproachComparison-TorchModel",
     config={
         "segment_length": 40.0,
-        "model": "PyTorch Nonlinear Regression with Raw Radar Data",
-        "input_type": "raw_radar_data",
-        "trim_ratio": 0.03
+        "model": "LinearRegression",
+        "pca_components": 510,
+        "trim_ratio": 0.1
     }
 )
 
@@ -29,19 +30,20 @@ wandb.init(
 RADAR = "Data/RadarTest/radar_20260729_145247.npz"
 MOTOR = "Data/TimeLogs/time_log_20260729_145342.json"  
 
-save_dir = "Data/calibration_plots/SegmentationWandB_Nonlinear_RawData/00"
+save_dir = "Data/calibration_plots/ApproachComparison/00"
 
-motor_raw_dir = os.path.join(save_dir, "Motor_vs_RawData")
+motor_pca_dir = os.path.join(save_dir, "Motor_vs_PCA")
 regression_dir = os.path.join(save_dir, "RegressionModels")
-single_model_dir = os.path.join(save_dir, "RegressionModel_per_segment")
+single_reg_dir = os.path.join(save_dir, "RegressionModel_per_segment")
 cal_test_dir = os.path.join(save_dir, "Calibration_vs_Test")
 cal_matrix_dir = os.path.join(save_dir, "Calibration_Matrix")
 
-for d in [motor_raw_dir, regression_dir, single_model_dir, cal_test_dir, cal_matrix_dir]:
+for d in [motor_pca_dir, regression_dir, single_reg_dir, cal_test_dir, cal_matrix_dir]:
     os.makedirs(d, exist_ok=True)
 # ══════════════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════════════════
 MOTOR_EPOCH: datetime.datetime | None = None
-# ══════════════════════════════════
+# ══════════════════════════════════════════════════════════════════════════════
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -233,30 +235,27 @@ def align_motor_to_radar(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Plot Motor vs. Raw Radar Data
+# Plot Motor vs. PCA
 # ─────────────────────────────────────────────────────────────────────────────
-def plot_motor_vs_raw_data(
-    segment,
+def plot_pca_vs_motor(
     radar_times_sec: np.ndarray,
-    raw_data: np.ndarray,          # shape (Timeframes, features)
+    pca_values: np.ndarray,          # shape (Timeframes,) — first PC or any scalar
     motor_times_aligned: np.ndarray,
     motor_positions: np.ndarray,
-    data_label: str = "Raw Radar Energy",
+    pca_label: str = "PC 1",
     position_unit: str = "position",
 ) -> None:
-    fig, ax1 = plt.subplots(figsize=(14, 5))
-    fig.patch.set_facecolor("#f8f8f8")
+    fig_M_vs_PCA, ax1 = plt.subplots(figsize=(14, 5))
+    fig_M_vs_PCA.patch.set_facecolor("#f8f8f8")
     ax1.set_facecolor("#f8f8f8")
 
-    # ── Raw Data (left axis) ──────────────────────────────────────────────────
-    color_data = "#2176AE"
+    # ── PCA (left axis) ──────────────────────────────────────────────────────
+    color_pca = "#2176AE"
     ax1.set_xlabel("Time  (s from t=0)", fontsize=12)
-    ax1.set_ylabel(data_label, color=color_data, fontsize=11)
-    # Compute mean energy across all features
-    mean_energy = np.mean(raw_data, axis=1)
-    ax1.plot(radar_times_sec, mean_energy,
-             color=color_data, lw=1.8, label=data_label, zorder=3)
-    ax1.tick_params(axis="y", labelcolor=color_data)
+    ax1.set_ylabel(pca_label, color=color_pca, fontsize=11)
+    ax1.plot(radar_times_sec, pca_values,
+             color=color_pca, lw=1.8, label=pca_label, zorder=3)
+    ax1.tick_params(axis="y", labelcolor=color_pca)
     ax1.grid(True, ls="--", alpha=0.4)
 
     # ── Motor position (right axis, step plot) ────────────────────────────────
@@ -266,7 +265,7 @@ def plot_motor_vs_raw_data(
 
     #
     # build dense interpolated motor signal
-    t_dense = np.linspace(motor_times_aligned[0], motor_times_aligned[-1], 1000)
+    t_dense = np.linspace(motor_times_aligned[0], motor_times_aligned[-1], len(radar_times_sec))
     y_dense = np.interp(t_dense, motor_times_aligned, motor_positions)
     ax2.plot(t_dense, y_dense, color=color_motor, lw=2.2, label="Motor position", zorder=4, alpha=0.5)
 
@@ -275,6 +274,11 @@ def plot_motor_vs_raw_data(
                 color=color_motor, s=25, zorder=5)
 
     ax2.tick_params(axis="y", labelcolor=color_motor)
+
+    # tidy y-ticks: one tick per known position, labelled with action name
+    sorted_actions = sorted(ACTION_MAP.items(), key=lambda kv: kv[1])
+    # ax2.set_yticks([v for _, v in sorted_actions])
+    # ax2.set_yticklabels([k for k, _ in sorted_actions], fontsize=9)
     ax2.yaxis.set_major_locator(ticker.AutoLocator())
 
     # ── Legend ────────────────────────────────────────────────────────────────
@@ -282,49 +286,36 @@ def plot_motor_vs_raw_data(
     h2, l2 = ax2.get_legend_handles_labels()
     ax1.legend(h1 + h2, l1 + l2, loc="upper left", framealpha=0.85)
 
-    plt.title("Raw Radar Data  vs  Motor Position  (aligned to t = 0)", fontsize=13, pad=10)
+    plt.title("PCA  vs  Motor Position  (aligned to t = 0)", fontsize=13, pad=10)
     plt.tight_layout()
-    filename = os.path.join(motor_raw_dir, f"Motor_vs_RawData_segment{segment}.png")
-    plt.savefig(filename, dpi=150, bbox_inches="tight")
-    plt.close()
-    
+    plt.savefig("pca_vs_motor.png", dpi=150, bbox_inches="tight")
+    print("Saved → pca_vs_motor.png")
+    plt.show()
+
 # ─────────────────────────────────────────────────────────────────────────────
-# PyTorch Model with Configurable Input Size
+# PyTorch Model
 # ─────────────────────────────────────────────────────────────────────────────
 import torch
 import torch.nn as nn
 
-class MotorNetRawData(nn.Module):
-    def __init__(self, input_size: int):
+class MotorNet(nn.Module):
+    def __init__(self):
         super().__init__()
-        
-        # Dynamically scale hidden layers based on input size
-        hidden1 = max(128, input_size // 2)
-        hidden2 = max(64, input_size // 4)
-        hidden3 = 32
-
-        self.network = nn.Sequential(
-            nn.Linear(input_size, hidden1),
-            nn.ReLU(),
-            nn.Dropout(0.2),
-            nn.Linear(hidden1, hidden2),
-            nn.ReLU(),
-            nn.Dropout(0.2),
-            nn.Linear(hidden2, hidden3),
-            nn.ReLU(),
-            nn.Linear(hidden3, 1)
-        )
+        self.linear = nn.Linear(1, 1)   # <-- THIS is linear regression
 
     def forward(self, x):
-        return self.network(x)
+        return self.linear(x)
 
-def train_model(X, y, segment_id, epochs=5000, lr=1e-3):
+def train_model(X, y, segment_id, epochs=1000, lr=1e-1):
     torch.manual_seed(0)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    
-    # Get input size from data
-    input_size = X.shape[1] if X.ndim > 1 else 1
-    model = MotorNetRawData(input_size=input_size).to(device)
+
+    model = MotorNet().to(device)
+
+    patience = 50
+    counter = 0
+    min_delta = 1e-6
+
 
     X_t = torch.tensor(X, dtype=torch.float32).to(device)
     y_t = torch.tensor(y, dtype=torch.float32).to(device)
@@ -332,11 +323,6 @@ def train_model(X, y, segment_id, epochs=5000, lr=1e-3):
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     loss_fn = nn.MSELoss()
     prev_loss = float("inf")  # or None
-
-    patience = 200
-    counter = 0
-    min_delta = 1e-7
-
 
     for epoch in range(epochs):
         model.train()
@@ -472,67 +458,6 @@ def max_abs_error(y_true, y_pred):
     return max_error
 
 
-def plot_nonlinear_model(
-    model: nn.Module,
-    x_values: np.ndarray,
-    y_values: np.ndarray,
-    x_label: str = "Raw Data",
-    y_label: str = "Position in cm",
-    title: str | None = None,
-    save_path: str | None = None,
-):
-    """Plot the learned nonlinear calibration function f(x) over a dense grid."""
-    model.eval()
-
-    # For high-dimensional input, plot against the first principal component
-    if x_values.ndim > 1 and x_values.shape[1] > 1:
-        from sklearn.decomposition import PCA
-        pca_viz = PCA(n_components=1)
-        x_viz = pca_viz.fit_transform(x_values).squeeze()
-    else:
-        x_viz = x_values.squeeze()
-    
-    x_min, x_max = float(np.min(x_viz)), float(np.max(x_viz))
-    x_grid = np.linspace(x_min, x_max, 300).astype(np.float32)
-
-    # Create predictions
-    if x_values.ndim > 1 and x_values.shape[1] > 1:
-        # Project back to original space for prediction
-        from sklearn.decomposition import PCA
-        pca_full = PCA(n_components=x_values.shape[1])
-        pca_full.fit(x_values)
-        x_grid_orig = pca_full.inverse_transform(x_grid.reshape(-1, 1))
-        x_grid_t = torch.tensor(x_grid_orig, dtype=torch.float32)
-    else:
-        x_grid_t = torch.tensor(x_grid, dtype=torch.float32).unsqueeze(1)
-
-    with torch.no_grad():
-        y_grid = model(x_grid_t).squeeze().cpu().numpy()
-
-    fig, ax = plt.subplots(figsize=(8, 5))
-    ax.scatter(x_viz, y_values, s=8, alpha=0.4, color="#2c7fb8", label="Data")
-    ax.plot(x_grid, y_grid, color="#d95f02", linewidth=2, label=r"$f(x)$")
-    ax.set_xlabel(x_label)
-    ax.set_ylabel(y_label)
-    ax.set_ylim(0, 3)
-    ax.set_title(title or "Nonlinear calibration model (raw data)")
-    ax.grid(alpha=0.3)
-    ax.legend()
-    plt.tight_layout()
-
-    if save_path is None:
-        base_name = "nonlinear_model_raw"
-        if title is not None:
-            safe_title = "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in title)
-            base_name = safe_title.strip("._-") or base_name
-        save_path = os.path.join(single_model_dir, f"{base_name}.png")
-
-    os.makedirs(os.path.dirname(save_path), exist_ok=True)
-    fig.savefig(save_path, dpi=150, bbox_inches="tight")
-
-    return fig, ax
-
-
 # ---------------------------------  Plot of signal processing ----------------------------
 # ─────────────────────────────────────────────────────────────────────────────
 # Plotting of radargrams, radargrams with static removed and signal of highest energy
@@ -560,7 +485,7 @@ def plot_calibration_models(calibration_models):
             label=f"Seg {i} (m={slope:.3f}, b={intercept:.3f})"
         )
 
-    plt.xlabel("Raw Data Component")
+    plt.xlabel("PCA Component 1")
     plt.ylabel("Displacement")
     plt.title("Regression Lines (Segments 0–5)")
     plt.legend()
@@ -601,336 +526,646 @@ def plot_motor(times, positions):
 
 
 
-#==============================================================MAIN===========================================
-#────────────────────────────────────────────────────────────────────────────
+# ==================================================================================================================
+#                                                   MAIN
+# ==================================================================================================================
 
+segments = allign_and_split(
+    RADAR,
+    MOTOR,
+    segment_length=40.0
+)
 
-segments = allign_and_split(RADAR, MOTOR, segment_length=40.0)
-
-calibration_models = []
 all_segments = []
 reference_mean = None
+
+# ==============================================================
+# STEP 1:
+# Prepare all segments and obtain reference mean from segment 0
+# ==============================================================
 
 for i in range(len(segments)):
 
     radar_cube_seg, radar_times, motor_times, motor_positions = segments[i]
+
     print(f"\n--- Segment {i} ---")
 
-    # skip empty segments
+    # Skip empty segments
     if len(radar_times) == 0 or len(motor_times) < 2:
         print("Skipping (not enough data)")
         continue
 
-    rx1, rx2, rx1_cf, rx2_cf, *_ = basic_info_extraction(radar_cube_seg)
+    rx1, rx2, rx1_cf, rx2_cf, *_ = basic_info_extraction(
+        radar_cube_seg
+    )
 
-
-    # ─────────────────────────────────────────────────────────────────────────────
-    # Use raw radar data directly (both channels concatenated)
-    # ─────────────────────────────────────────────────────────────────────────────
     M_both = np.hstack([rx1_cf, rx2_cf])
 
+    # Reference mean from segment 0
     if i == 0:
         reference_mean = np.mean(M_both, axis=0)
-        print("Stored reference mean from segment 0; skipping segment 0 for the rest of the analysis")
+
+        print(
+            "Stored reference mean from segment 0; "
+            "skipping segment 0 for the rest of the analysis"
+        )
         continue
-
-    mean = reference_mean if reference_mean is not None else np.mean(M_both, axis=0)
-    
-    M_centered = M_both - mean
-
-    # Plot motor vs raw data
-    plot_motor_vs_raw_data(raw_data=M_centered,
-                          motor_times_aligned=motor_times,
-                          motor_positions=motor_positions,
-                          radar_times_sec=radar_times,
-                          segment=i
-                          )
 
     all_segments.append({
         "segment": i,
         "radar_cube": radar_cube_seg,
         "radar_times": radar_times,
         "motor_times": motor_times,
-        "motor_positions": motor_positions
+        "motor_positions": motor_positions,
+        "M_both": M_both
     })
 
 
-    if i >= 7:
-        print("Skipping model training for this segment")
+# ==============================================================
+# STEP 2:
+# Train ONLY model 3 using Segment -> PCA
+# ==============================================================
+
+calibration_segment_id = 3
+
+calibration_segment = next(
+    seg for seg in all_segments
+    if seg["segment"] == calibration_segment_id
+)
+
+M_cal = calibration_segment["M_both"]
+
+# Use reference mean
+M_cal_centered = torch.tensor(
+    M_cal - reference_mean,
+    dtype=torch.float32
+)
+
+# PCA specifically on Segment 3
+op_model3 = PCACompressionOp(
+    data=M_cal_centered,
+    n_components=510,
+    centering=False
+)
+
+pca_model3 = op_model3(M_cal_centered)[0]
+
+pc1_model3 = pca_model3[:, 0].numpy()
+
+
+# --------------------------------------------------------------
+# Align motor data for Segment 3
+# --------------------------------------------------------------
+
+radar_times_3 = calibration_segment["radar_times"]
+motor_times_3 = calibration_segment["motor_times"]
+motor_positions_3 = calibration_segment["motor_positions"]
+
+y_aligned_3 = np.interp(
+    radar_times_3,
+    motor_times_3,
+    motor_positions_3
+)
+
+y_3 = y_aligned_3 / 2000
+
+X_3 = pc1_model3
+
+
+# --------------------------------------------------------------
+# Trim extremes
+# --------------------------------------------------------------
+
+xmin, xmax = X_3.min(), X_3.max()
+span = xmax - xmin
+
+lower = xmin + 0.1 * span
+upper = xmax - 0.1 * span
+
+mask = (X_3 >= lower) & (X_3 <= upper)
+
+X_trimmed = X_3[mask].reshape(-1, 1)
+y_trimmed = y_3[mask]
+
+
+# --------------------------------------------------------------
+# Downsample static regions
+# --------------------------------------------------------------
+
+dy = np.abs(
+    np.diff(
+        y_trimmed,
+        prepend=y_trimmed[0]
+    )
+)
+
+motion_mask = dy > 1e-4
+keep_mask = motion_mask.copy()
+
+# Keep every 30th static sample
+keep_mask[~motion_mask] = (
+    np.arange(len(y_trimmed))[~motion_mask] % 30 == 0
+)
+
+X_filtered = X_trimmed[keep_mask].reshape(-1, 1)
+y_filtered = y_trimmed[keep_mask].reshape(-1, 1)
+
+
+# --------------------------------------------------------------
+# Train MODEL 3
+# --------------------------------------------------------------
+
+model_3 = train_model(
+    X_filtered,
+    y_filtered,
+    calibration_segment_id
+)
+
+model_3.eval()
+
+print("\n========================================")
+print("MODEL 3 TRAINED")
+print("========================================")
+
+print(
+    f"Slope:     {model_3.linear.weight.item():.4f}"
+)
+
+print(
+    f"Intercept: {model_3.linear.bias.item():.4f}"
+)
+
+
+# ==============================================================
+# STEP 3:
+# SEGMENT -> PCA
+#
+# Apply the PCA operator trained on segment 3 to each test segment
+# and use MODEL 3 for prediction
+# ==============================================================
+
+segment_pca_results = []
+
+
+for test in all_segments:
+
+    test_id = test["segment"]
+
+    if test_id < 7 or test_id > 13:
         continue
 
+    print(
+        f"Segment -> PCA: evaluating segment {test_id}"
+    )
 
+    # ----------------------------------------------------------
+    # Extract radar data
+    # ----------------------------------------------------------
 
-    # ─────────────────────────────────────
-    # Align motor
-    # ─────────────────────────────────────
-    y_aligned = np.interp(radar_times, motor_times, motor_positions)
-    y = y_aligned / 2000
+    M_test = test["M_both"]
 
-    X = M_centered  # Use raw data directly
+    M_test_centered = torch.tensor(
+        M_test - reference_mean,
+        dtype=torch.float32
+    )
 
-    # ─────────────────────────────────────
-    # Trim extremes (row-wise based on first feature)
-    # ─────────────────────────────────────
-    x_energy = np.mean(np.abs(X), axis=1)  # mean energy per timeframe
-    xmin, xmax = x_energy.min(), x_energy.max()
-    span = xmax - xmin
+    # ----------------------------------------------------------
+    # Apply the PCA operator trained on Segment 3
+    # ----------------------------------------------------------
 
-    lower = xmin + 0.03 * span
-    upper = xmax - 0.03 * span
+    test_pca = op_model3(M_test_centered)[0]
 
-    mask = (x_energy >= lower) & (x_energy <= upper)
+    pc1_test = test_pca[:, 0].numpy()
 
-    X_trimmed = X[mask]
-    y_trimmed = y[mask]
+    # ----------------------------------------------------------
+    # Predict using MODEL 3
+    # ----------------------------------------------------------
 
+    X_test_t = torch.tensor(
+        pc1_test.reshape(-1, 1),
+        dtype=torch.float32
+    )
 
-    # ─────────────────────────────────────
-    # Downsample static regions (FIXED)
-    # ─────────────────────────────────────
-    dy = np.abs(np.diff(y_trimmed, prepend=y_trimmed[0]))
-
-    motion_mask = dy > 1e-4
-    keep_mask = motion_mask.copy()
-
-    # keep every 10th static sample
-    keep_mask[~motion_mask] = np.arange(len(y_trimmed))[~motion_mask] % 30 == 0
-
-    X_filtered = X_trimmed[keep_mask]
-    y_filtered = y_trimmed[keep_mask].reshape(-1, 1)
-
-    # ─────────────────────────────────────
-    # Train model
-    # ─────────────────────────────────────
-
-
-
-    model = train_model(X_filtered, y_filtered, i)
-    wandb.watch(model, log="all")
-    model_path = os.path.join(save_dir, f"model_segment_{i}.pkl")
-
-
-    torch.save(model.state_dict(), model_path)
-    wandb.save(model_path)
-
-    
-    # Log training metrics
-    wandb.log({
-        "segment": i,
-        "num_samples": len(X_filtered),
-        "input_size": X_filtered.shape[1]
-    })
-
-
-    # store results
-    calibration_models.append({
-        "segment": i,
-        "model": model,
-        "mean": mean
-    })
-
-    
-    # ─────────────────────────────────────
-    # plot per segment
-    # ─────────────────────────────────────
-    #filename = os.path.join(single_model_dir, f"RegressionModel_segment{i}.png")
-    # fig, ax = plot_nonlinear_model(
-    #     model=model,
-    #     x_values=X_filtered,
-    #     y_values=y_filtered,
-    #     x_label="Raw Radar Data",
-    #     y_label="Position in cm",
-    #     title=f"Segment {i}: Nonlinear calibration model f(x)",
-    #     save_path=filename,
-    # )
-    # wandb.log({
-    #     f"regression_plot_segment_{i}": wandb.Image(fig)
-    # })
-    # plt.close(fig)
-    
-    
-#plot_calibration_models(calibration_models)
-
-# ─────────────────────────────────────
-#calibration Matrix
-# ─────────────────────────────────────
-n_segments = len(all_segments)
-
-calibration_matrix_rmse = np.zeros(
-    (n_segments, n_segments)
-)
-calibration_matrix_mae = np.zeros(
-    (n_segments, n_segments)
-)
-calibration_matrix_max_error = np.zeros(
-    (n_segments, n_segments)
-)
-
-
-
-for i, calibration in enumerate(calibration_models):
-
-    
-    mean = calibration["mean"]
-    model = calibration["model"]
-
-
-    for j, test in enumerate(all_segments):
-
-        test_id = test["segment"]
-        print(f"Calibration {i} -> Test {j}")
-
-
-        # -------------------------------
-        # Extract radar features
-        # -------------------------------
-        rx1, rx2, rx1_cf, rx2_cf, *_ = basic_info_extraction(test["radar_cube"])
-
-        M_test = np.hstack([rx1_cf, rx2_cf])
-
-
-        # -------------------------------
-        # IMPORTANT:
-        # use calibration mean
-        # -------------------------------
-        M_test_centered = M_test - mean
-
-        # ─────────────────────────────────────────────────────────────────────────────
-        # Use raw radar data directly
-        # ─────────────────────────────────────────────────────────────────────────────
-
-        # -------------------------------
-        # Motor ground truth
-        # -------------------------------        
-        y_motor = test["motor_positions"] / 2000
-        t_motor = test["motor_times"]
-        t_radar = test["radar_times"]
-
-        # -------------------------------
-        # Prediction
-        # -------------------------------
-        model.eval()
-
-        X_test_t = torch.tensor(M_test_centered, dtype=torch.float32)
-
-        with torch.no_grad():
-            y_pred = model(X_test_t).squeeze().cpu().numpy()
-
-        y_interp = np.interp( t_motor, t_radar, y_pred)
-
-        rmse_error = rmse(y_motor, y_interp)
-        mae_error = mae(y_motor, y_interp)
-        max_error = max_abs_error(y_motor, y_interp)
-        
-        wandb.log({
-            f"prediction_plot_cal{i}_test{j}": wandb.Image(plt),
-            "rmse": rmse_error,
-            "mae": mae_error,
-            "max_error": max_error
-        })
-
-        model_path = os.path.join(save_dir, f"model_segment_{i}.pt")
-        torch.save(model.state_dict(), model_path)
-        wandb.save(model_path)
-
-        # -------------------------------
-        # Fill calibration matrices
-        # -------------------------------
-        
-        calibration_matrix_rmse[i, j] = rmse_error
-        calibration_matrix_mae[i, j] = mae_error
-        calibration_matrix_max_error[i, j] = max_error
-
-
-        plt.figure(figsize=(10,5))
-
-        plt.plot(t_motor, y_motor, label="True motor movement", linewidth=2)
-        plt.plot(t_radar, y_pred, label="Predicted (Raw Data)", alpha=0.8, color='orange')
-        plt.plot(t_motor, y_interp, label="Predicted (interp)", alpha=0.8, color='green')
-
-        plt.xlabel("Time (s)")
-        plt.ylabel("Motor displacement (cm)")
-
-        plt.title(
-            f"Cal {i} → Test {j} | RMSE = {rmse_error:.4f}"
+    with torch.no_grad():
+        y_pred = (
+            model_3(X_test_t)
+            .squeeze()
+            .cpu()
+            .numpy()
         )
 
-        plt.legend()
-        plt.grid()
+    # ----------------------------------------------------------
+    # Ground truth
+    # ----------------------------------------------------------
 
-        filename = os.path.join(cal_test_dir, f"cal_{i}_test_{j}.png")
-        plt.savefig(filename, dpi=150, bbox_inches="tight")
-        wandb.log({
-            f"prediction_plot_cal{i}_test{j}": wandb.Image(plt)
-        })
-        plt.close()
+    t_motor = test["motor_times"]
+    y_motor = test["motor_positions"] / 2000
+
+    t_radar = test["radar_times"]
+
+    y_interp = np.interp(
+        t_motor,
+        t_radar,
+        y_pred
+    )
+
+    segment_pca_results.append({
+        "segment": test_id,
+        "t_motor": t_motor,
+        "y_motor": y_motor,
+        "t_radar": t_radar,
+        "y_pred": y_pred,
+        "y_interp": y_interp
+    })
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Plot and save RMSE calibration matrix
-# ─────────────────────────────────────────────────────────────────────────────
-plt.figure(figsize=(7,6))
+# ==============================================================
+# Plot SEGMENT -> PCA
+# ==============================================================
 
-plt.imshow(
-    calibration_matrix_rmse[:6, :],
-    aspect="auto"
+plt.figure(figsize=(12, 6))
+
+for result in segment_pca_results:
+
+    plt.plot(
+        result["t_motor"],
+        result["y_motor"],
+        linewidth=2,
+        label=f"True - Segment {result['segment']}",
+        alpha=0.5
+    )
+
+    plt.plot(
+        result["t_motor"],
+        result["y_interp"],
+        label=f"Predicted - Segment {result['segment']}"
+    )
+
+plt.xlabel("Time (s)")
+plt.ylabel("Motor displacement (cm)")
+
+plt.title(
+    "Model 3: Segment → PCA → | Segments 7–13"
 )
-plt.colorbar(label="RMSE")
-plt.xlabel("Test segment")
-plt.ylabel("Calibration segment")
-plt.title("Calibration Transfer Matrix - RMSE")
 
-filename = os.path.join(cal_matrix_dir, "calibration_matrix_rmse.png")
-plt.savefig(filename, dpi=150, bbox_inches="tight")
+plt.legend(
+    ncol=2,
+    fontsize=8
+)
+
+plt.grid()
+
+filename = os.path.join(
+    cal_test_dir,
+    "model3_segment_pca_segments7_13.png"
+)
+
+plt.savefig(
+    filename,
+    dpi=150,
+    bbox_inches="tight"
+)
+
 wandb.log({
-    "calibration_matrix_rmse": wandb.Image(plt)
+    "model3_segment_pca_segments7_13":
+        wandb.Image(plt)
 })
+
+plt.show()
 plt.close()
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Plot and save MAE calibration matrix
-# ─────────────────────────────────────────────────────────────────────────────
-plt.figure(figsize=(7,6))
 
-plt.imshow(
-    calibration_matrix_mae[:6, :],
-    aspect="auto"
+# ==============================================================
+# STEP 4:
+# PCA -> SEGMENT
+#
+# First calculate ONE PCA over ALL radar data.
+# Then split the resulting PC1 into segments.
+# ==============================================================
+
+print("\n========================================")
+print("PCA -> SEGMENT")
+print("Calculating global PCA...")
+print("========================================")
+
+
+# --------------------------------------------------------------
+# Concatenate all radar data
+# --------------------------------------------------------------
+Segmented_M_all = np.vstack([
+    seg["M_both"]
+    for seg in all_segments
+])
+
+
+
+radar_cube, timestamps, time_cube = load_radar(RADAR)
+motor_times, motor_positions = load_motor_log(MOTOR)
+
+radar_datetimes = time_cube[0, :]
+radar_times = radar_times_to_sec(radar_datetimes)
+
+motor_times_aligned = align_motor_to_radar(
+    motor_times,
+    radar_datetimes,
+    MOTOR_EPOCH
 )
-plt.colorbar(label="MAE")
-plt.xlabel("Test segment")
-plt.ylabel("Calibration segment")
-plt.title("Calibration Transfer Matrix - MAE")
 
-filename = os.path.join(cal_matrix_dir, "calibration_matrix_mae.png")
-plt.savefig(filename, dpi=150, bbox_inches="tight")
+segment_length = 40.0
+
+
+rx1, rx2, rx1_cf, rx2_cf, *_ = basic_info_extraction(radar_cube)
+
+M_both = np.hstack([rx1_cf, rx2_cf])
+mean = reference_mean if reference_mean is not None else np.mean(M_both, axis=0)
+
+print(f"Segmented_M_all shape: {Segmented_M_all.shape}")
+print(f"M_all_centered shape: {M_both.shape}")
+
+M_all_centered = torch.tensor(M_both - mean, dtype=torch.float32)
+
+# op_global = PCACompressionOp(
+#     data=M_all_centered,
+#     n_components=510,
+#     centering=False
+# )
+
+pca_global = op_model3(M_all_centered)[0]
+
+pc1_global = pca_global[:, 0].numpy()
+
+
+# --------------------------------------------------------------
+# Keep track of where each ORIGINAL segment starts/ends
+# --------------------------------------------------------------
+
+segment_lengths = []
+
+for seg in segments:
+
+    radar_cube_seg, radar_times_seg, motor_times_seg, motor_positions_seg = seg
+
+    segment_lengths.append(
+        len(radar_times_seg)
+    )
+
+segment_boundaries = np.cumsum(
+    [0] + segment_lengths
+)
+
+
+# ==============================================================
+# Predict segments 7-13 using MODEL 3
+# ==============================================================
+
+global_pca_results = []
+
+
+for test in all_segments:
+
+    test_id = test["segment"]
+
+    if test_id < 7 or test_id > 13:
+        continue
+
+    print(
+        f"PCA -> Segment: evaluating segment {test_id}"
+    )
+
+    # ----------------------------------------------------------
+    # Get the CORRECT global-PCA indices
+    #
+    # segment 0 is included in the global PCA!
+    # ----------------------------------------------------------
+
+    start = segment_boundaries[test_id]
+    end = segment_boundaries[test_id + 1]
+
+    print(
+        f"Global PCA indices: {start} -> {end}"
+    )
+
+    # ----------------------------------------------------------
+    # Extract this segment from GLOBAL PC1
+    # ----------------------------------------------------------
+
+    pc1_test = pc1_global[start:end]
+
+    # Optional sanity check
+    print(
+        f"PC1 length: {len(pc1_test)}, "
+        f"radar length: {len(test['radar_times'])}"
+    )
+
+    # ----------------------------------------------------------
+    # Predict using SAME MODEL 3
+    # ----------------------------------------------------------
+
+    X_test_t = torch.tensor(
+        pc1_test.reshape(-1, 1),
+        dtype=torch.float32
+    )
+
+    with torch.no_grad():
+        y_pred = (
+            model_3(X_test_t)
+            .squeeze()
+            .cpu()
+            .numpy()
+        )
+
+    # ----------------------------------------------------------
+    # Ground truth
+    # ----------------------------------------------------------
+
+    t_motor = test["motor_times"]
+    y_motor = test["motor_positions"] / 2000
+
+    t_radar = test["radar_times"]
+
+    #print(f"Lengths - Radar: {len(t_radar)}, Predicted: {len(y_pred)}, Motor: {len(t_motor)}, Ground Truth: {len(y_motor)}")
+
+    y_interp = np.interp(
+        t_motor,
+        t_radar,
+        y_pred
+    )
+
+    global_pca_results.append({
+        "segment": test_id,
+        "t_motor": t_motor,
+        "y_motor": y_motor,
+        "t_radar": t_radar,
+        "y_pred": y_pred,
+        "y_interp": y_interp
+    })
+
+
+# ==============================================================
+# Plot PCA -> SEGMENT
+# ==============================================================
+
+plt.figure(figsize=(12, 6))
+
+for result in global_pca_results:
+
+    plt.plot(
+        result["t_motor"],
+        result["y_motor"],
+        linewidth=2,
+        alpha=0.5,
+        label=f"True - Segment {result['segment']}"
+    )
+
+    plt.plot(
+        result["t_motor"],
+        result["y_interp"],
+        label=f"Predicted - Segment {result['segment']}"
+    )
+
+plt.xlabel("Time (s)")
+plt.ylabel("Motor displacement (cm)")
+
+plt.title(
+    " Model 3: PCA → Segment | Segments 7–13"
+)
+
+plt.legend(
+    ncol=2,
+    fontsize=8
+)
+
+plt.grid()
+
+filename = os.path.join(
+    cal_test_dir,
+    "model3_pca_segment_segments7_13.png"
+)
+
+plt.savefig(
+    filename,
+    dpi=150,
+    bbox_inches="tight"
+)
+
 wandb.log({
-    "calibration_matrix_mae": wandb.Image(plt)
+    "model3_pca_segment_segments7_13":
+        wandb.Image(plt)
 })
+
+plt.show()
 plt.close()
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Plot and save Max Error calibration matrix
-# ─────────────────────────────────────────────────────────────────────────────
-plt.figure(figsize=(7,6))
 
-plt.imshow(
-    calibration_matrix_max_error[:6, :],
-    aspect="auto"
+# ==============================================================
+# Combined plot:
+# True vs Segment -> PCA vs PCA -> Segment
+# ==============================================================
+
+plt.figure(figsize=(14, 6))
+
+# --------------------------------------------------------------
+# Plot segments 7-13
+# --------------------------------------------------------------
+
+for seg_pca, global_pca in zip(
+    segment_pca_results,
+    global_pca_results
+):
+
+    segment_id = seg_pca["segment"]
+
+    # ----------------------------------------------------------
+    # True motor movement
+    # ----------------------------------------------------------
+
+    plt.plot(
+        seg_pca["t_motor"],
+        seg_pca["y_motor"],
+        color="red",
+        alpha=0.5,
+        linestyle="--",   # dashed
+        linewidth=1,
+        label="True motor movement"
+        if segment_id == 7 else None
+    )
+
+    # ----------------------------------------------------------
+    # Segment -> PCA
+    # ----------------------------------------------------------
+
+    plt.plot(
+        seg_pca["t_motor"],
+        seg_pca["y_interp"],
+        color="blue",
+        alpha=0.8,
+        linewidth=1.5,
+        label="Segment → PCA"
+        if segment_id == 7 else None
+    )
+
+    # ----------------------------------------------------------
+    # PCA -> Segment
+    # ----------------------------------------------------------
+
+    plt.plot(
+        global_pca["t_motor"],
+        global_pca["y_interp"],
+        color="green",
+        alpha=0.8,
+        linewidth=1.5,
+        label="PCA → Segment"
+        if segment_id == 7 else None
+    )
+
+
+# --------------------------------------------------------------
+# Formatting
+# --------------------------------------------------------------
+
+plt.xlabel("Time (s)")
+plt.xticks([280, 320, 360, 400, 440, 480, 520], fontsize=10)
+plt.ylabel("Motor displacement (cm)")
+
+plt.title(
+    "Model 3: Segment → PCA vs PCA → Segment | Segments 7–13"
 )
-plt.colorbar(label="Max Abs Error")
-plt.xlabel("Test segment")
-plt.ylabel("Calibration segment")
-plt.title("Calibration Transfer Matrix - Max Absolute Error")
+plt.legend(
+    loc="best",
+    fontsize=11,
+    frameon=True
+)
+plt.grid()
 
-filename = os.path.join(cal_matrix_dir, "calibration_matrix_max_error.png")
-plt.savefig(filename, dpi=150, bbox_inches="tight")
+filename = os.path.join(
+    cal_test_dir,
+    "model3_segment_pca_vs_pca_segment_segments7_13.png"
+)
+
+plt.savefig(
+    filename,
+    dpi=150,
+    bbox_inches="tight"
+)
+
 wandb.log({
-    "calibration_matrix_max_error": wandb.Image(plt)
+    "model3_segment_pca_vs_pca_segment_segments7_13":
+        wandb.Image(plt)
 })
+
+plt.show()
 plt.close()
+
+
+# ==============================================================
+# Finish
+# ==============================================================
 
 wandb.config.update({
-    "segments_used_for_calibration": 6
+    "calibration_segment": 3,
+    "test_segments": "7-13",
+    "model_used_for_all_predictions": "segment_3",
+    "comparison": "segment_pca_vs_pca_segment"
 })
+
 wandb.finish()
-# ─────────────────────────────────────

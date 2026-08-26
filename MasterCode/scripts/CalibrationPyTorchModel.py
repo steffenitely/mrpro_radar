@@ -861,7 +861,7 @@ plt.imshow(
     calibration_matrix_rmse[:6, :],
     aspect="auto"
 )
-plt.colorbar(label="RMSE in mm")
+plt.colorbar(label="RMSE in cm")
 plt.xlabel("Test segment")
 plt.ylabel("Calibration segment")
 plt.title("Calibration Transfer Matrix - RMSE")
@@ -882,7 +882,7 @@ plt.imshow(
     calibration_matrix_mae[:6, :],
     aspect="auto"
 )
-plt.colorbar(label="MAE in mm")
+plt.colorbar(label="MAE in cm")
 plt.xlabel("Test segment")
 plt.ylabel("Calibration segment")
 plt.title("Calibration Transfer Matrix - MAE")
@@ -903,7 +903,7 @@ plt.imshow(
     calibration_matrix_max_error[:6, :],
     aspect="auto"
 )
-plt.colorbar(label="Max Abs Error in mm")
+plt.colorbar(label="Max Abs Error in cm")
 plt.xlabel("Test segment")
 plt.ylabel("Calibration segment")
 plt.title("Calibration Transfer Matrix - Max Absolute Error")
