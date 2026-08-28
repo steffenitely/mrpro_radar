@@ -3,23 +3,21 @@ import numpy as np
 from scipy.signal import detrend
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
-from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import mean_squared_error
 import datetime
-from sklearn.linear_model import LinearRegression
 import torch
 import os
 import wandb
 
-# wandb.init(
-#     project="radar-motor-nonlinear-TorchModel-RawData",
-#     config={
-#         "segment_length": 40.0,
-#         "model": "PyTorch Nonlinear Regression with Raw Radar Data",
-#         "input_type": "raw_radar_data",
-#         "trim_ratio": 0.03
-#     }
-# )
+wandb.init(
+    project="radar-motor-direct-radar-data",
+    config={
+        "segment_length": 40.0,
+        "model": "PyTorch MLP with direct segmented radar data",
+        "input_type": "clutter_removed_detrended_radar",
+        "trim_ratio": 0.03
+    }
+)
 
 # ══════════════════════════════════════════════════════════════════════════════
 # ◀ CONFIGURE — File paths
@@ -31,13 +29,11 @@ MOTOR = "Data/TimeLogs/time_log_20260729_145342.json"
 
 save_dir = "Data/calibration_plots/SegmentationWandB_Nonlinear_RawData/00"
 
-motor_raw_dir = os.path.join(save_dir, "Motor_vs_RawData")
-regression_dir = os.path.join(save_dir, "RegressionModels")
-single_model_dir = os.path.join(save_dir, "RegressionModel_per_segment")
+
 cal_test_dir = os.path.join(save_dir, "Calibration_vs_Test")
 cal_matrix_dir = os.path.join(save_dir, "Calibration_Matrix")
 
-for d in [motor_raw_dir, regression_dir, single_model_dir, cal_test_dir, cal_matrix_dir]:
+for d in [cal_test_dir, cal_matrix_dir]:
     os.makedirs(d, exist_ok=True)
 # ══════════════════════════════════════════════════════════════════════════════
 MOTOR_EPOCH: datetime.datetime | None = None
@@ -127,10 +123,11 @@ def align_and_split(radar_path: str, motor_path: str, segment_length: float):
     rx2 = radar_cube[1, :, :]
     rx1_cf = remove_clutter(rx1)
     rx2_cf = remove_clutter(rx2)
-    rx1_cf = detrend(rx1_cf)
-    rx2_cf = detrend(rx2_cf)
+    rx1_cf = detrend(rx1_cf, axis=0)
+    rx2_cf = detrend(rx2_cf, axis=0)
     radar_cube[0, :, :] = rx1_cf
     radar_cube[1, :, :] = rx2_cf
+    
 
     print("Full radar shape:", radar_cube.shape)
 
@@ -322,7 +319,7 @@ def train_model(X, y, segment_id, epochs=5000, lr=1e-3):
 
     model.eval()
 
-    return model
+    return model.cpu()
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Signal Processing
@@ -386,7 +383,6 @@ def basic_info_extraction(radar_cube):
     rx1 = radar_cube[0, :, :] #old was without time stamps so directly data
     rx2 = radar_cube[1, :, :]
 
-    
     return rx1, rx2
 
 def rmse(y_true, y_pred):
@@ -414,41 +410,23 @@ def plot_nonlinear_model(
     title: str | None = None,
     save_path: str | None = None,
 ):
-    """Plot the learned nonlinear calibration function f(x) over a dense grid."""
+    """Plot predictions against measured motor positions."""
     model.eval()
 
-    # For high-dimensional input, plot against the first principal component
-    if x_values.ndim > 1 and x_values.shape[1] > 1:
-        from sklearn.decomposition import PCA
-        pca_viz = PCA(n_components=1)
-        x_viz = pca_viz.fit_transform(x_values).squeeze()
-    else:
-        x_viz = x_values.squeeze()
-    
-    x_min, x_max = float(np.min(x_viz)), float(np.max(x_viz))
-    x_grid = np.linspace(x_min, x_max, 300).astype(np.float32)
-
-    # Create predictions
-    if x_values.ndim > 1 and x_values.shape[1] > 1:
-        # Project back to original space for prediction
-        from sklearn.decomposition import PCA
-        pca_full = PCA(n_components=x_values.shape[1])
-        pca_full.fit(x_values)
-        x_grid_orig = pca_full.inverse_transform(x_grid.reshape(-1, 1))
-        x_grid_t = torch.tensor(x_grid_orig, dtype=torch.float32)
-    else:
-        x_grid_t = torch.tensor(x_grid, dtype=torch.float32).unsqueeze(1)
-
+    x_values_t = torch.tensor(x_values, dtype=torch.float32)
     with torch.no_grad():
-        y_grid = model(x_grid_t).squeeze().cpu().numpy()
+        predictions = model(x_values_t).squeeze().cpu().numpy()
 
     fig, ax = plt.subplots(figsize=(8, 5))
-    ax.scatter(x_viz, y_values, s=8, alpha=0.4, color="#2c7fb8", label="Data")
-    ax.plot(x_grid, y_grid, color="#d95f02", linewidth=2, label=r"$f(x)$")
-    ax.set_xlabel(x_label)
+    ax.scatter(y_values, predictions, s=8, alpha=0.4, color="#2c7fb8")
+    limits = [
+        min(float(np.min(y_values)), float(np.min(predictions))),
+        max(float(np.max(y_values)), float(np.max(predictions))),
+    ]
+    ax.plot(limits, limits, color="#d95f02", linewidth=2)
+    ax.set_xlabel("Measured position")
     ax.set_ylabel(y_label)
-    ax.set_ylim(0, 3)
-    ax.set_title(title or "Nonlinear calibration model (raw data)")
+    ax.set_title(title or "Direct radar calibration model")
     ax.grid(alpha=0.3)
     ax.legend()
     plt.tight_layout()
@@ -596,41 +574,42 @@ for i in range(len(segments)):
 
     # ─────────────────────────────────────
     # Trim extremes (row-wise based on first feature)
-    # ─────────────────────────────────────
-    x_energy = np.mean(np.abs(X), axis=1)  # mean energy per timeframe
-    xmin, xmax = x_energy.min(), x_energy.max()
-    span = xmax - xmin
+    # # ─────────────────────────────────────
+    # x_energy = np.mean(np.abs(X), axis=1)  # mean energy per timeframe
+    # xmin, xmax = x_energy.min(), x_energy.max()
+    # span = xmax - xmin
 
-    lower = xmin + 0.03 * span
-    upper = xmax - 0.03 * span
+    # lower = xmin + 0.03 * span
+    # upper = xmax - 0.03 * span
 
-    mask = (x_energy >= lower) & (x_energy <= upper)
+    # mask = (x_energy >= lower) & (x_energy <= upper)
 
-    X_trimmed = X[mask]
-    y_trimmed = y[mask]
+    # X_trimmed = X[mask]
+    # y_trimmed = y[mask]
 
 
-    # ─────────────────────────────────────
-    # Downsample static regions (FIXED)
-    # ─────────────────────────────────────
-    dy = np.abs(np.diff(y_trimmed, prepend=y_trimmed[0]))
+    # # ─────────────────────────────────────
+    # # Downsample static regions (FIXED)
+    # # ─────────────────────────────────────
+    # dy = np.abs(np.diff(y_trimmed, prepend=y_trimmed[0]))
 
-    motion_mask = dy > 1e-4
-    keep_mask = motion_mask.copy()
+    # motion_mask = dy > 1e-4
+    # keep_mask = motion_mask.copy()
 
-    # keep every 10th static sample
-    keep_mask[~motion_mask] = np.arange(len(y_trimmed))[~motion_mask] % 30 == 0
+    # # keep every 10th static sample
+    # keep_mask[~motion_mask] = np.arange(len(y_trimmed))[~motion_mask] % 30 == 0
 
-    X_filtered = X_trimmed[keep_mask]
-    y_filtered = y_trimmed[keep_mask].reshape(-1, 1)
+    # X_filtered = X_trimmed[keep_mask]
+    # y_filtered = y_trimmed[keep_mask].reshape(-1, 1)
 
     # ─────────────────────────────────────
     # Train model
     # ─────────────────────────────────────
 
 
-
-    model = train_model(X_filtered, y_filtered, i)
+    y = y.reshape(-1, 1)
+    
+    model = train_model(X, y, i)
     wandb.watch(model, log="all")
     model_path = os.path.join(save_dir, f"model_segment_{i}.pkl")
 
@@ -642,8 +621,8 @@ for i in range(len(segments)):
     # Log training metrics
     wandb.log({
         "segment": i,
-        "num_samples": len(X_filtered),
-        "input_size": X_filtered.shape[1]
+        "num_samples": len(X),
+        "input_size": X.shape[1]
     })
 
 
@@ -651,7 +630,8 @@ for i in range(len(segments)):
     calibration_models.append({
         "segment": i,
         "model": model,
-        "mean": mean
+        "mean": mean,
+        "input_size": X.shape[1]
     })
 
     
@@ -661,8 +641,8 @@ for i in range(len(segments)):
     #filename = os.path.join(single_model_dir, f"RegressionModel_segment{i}.png")
     # fig, ax = plot_nonlinear_model(
     #     model=model,
-    #     x_values=X_filtered,
-    #     y_values=y_filtered,
+    #     x_values=X,
+    #     y_values=y,
     #     x_label="Raw Radar Data",
     #     y_label="Position in cm",
     #     title=f"Segment {i}: Nonlinear calibration model f(x)",
@@ -709,9 +689,9 @@ for i, calibration in enumerate(calibration_models):
         # -------------------------------
         # Extract radar features
         # -------------------------------
-        rx1, rx2, rx1_cf, rx2_cf, *_ = basic_info_extraction(test["radar_cube"])
+        rx1, rx2 = basic_info_extraction(test["radar_cube"])
 
-        M_test = np.hstack([rx1_cf, rx2_cf])
+        M_test = np.hstack([rx1, rx2])
 
 
         # -------------------------------

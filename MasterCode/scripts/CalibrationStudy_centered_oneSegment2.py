@@ -217,7 +217,7 @@ def align_motor_to_radar(
     motor_times: np.ndarray,
     radar_datetimes: list[datetime.datetime],
     motor_epoch: datetime.datetime | None,
-) -> np.ndarray:
+    ) -> np.ndarray:
     """
     Return motor times expressed in the same second-offset as radar_times_sec.
 
@@ -244,7 +244,7 @@ def plot_pca_vs_motor(
     motor_positions: np.ndarray,
     pca_label: str = "PC 1",
     position_unit: str = "position",
-) -> None:
+    ) -> None:
     fig_M_vs_PCA, ax1 = plt.subplots(figsize=(14, 5))
     fig_M_vs_PCA.patch.set_facecolor("#f8f8f8")
     ax1.set_facecolor("#f8f8f8")
@@ -530,11 +530,7 @@ def plot_motor(times, positions):
 # MAIN
 # ==============================================================
 
-segments = allign_and_split(
-    RADAR,
-    MOTOR,
-    segment_length=40.0
-)
+segments = allign_and_split(RADAR, MOTOR, segment_length=40.0)
 
 all_segments = []
 reference_mean = None

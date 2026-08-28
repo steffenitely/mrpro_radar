@@ -100,7 +100,7 @@ class MotorController:
     def get_current_position(self):
         self.ser.write("\r".encode())
 
-        time.sleep(0.1)
+        time.sleep(0.05)
 
         resp = self.ser.read_all().decode(errors="ignore")
 

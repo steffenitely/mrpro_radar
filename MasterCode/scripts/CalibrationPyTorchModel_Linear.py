@@ -96,7 +96,7 @@ def radar_times_to_sec(radar_datetimes: list[datetime.datetime]) -> np.ndarray:
     t0 = radar_datetimes[0]
     return np.array([(dt - t0).total_seconds() for dt in radar_datetimes])
 
-def allign_and_split(radar_path: str, motor_path: str, segment_length: float):
+def align_and_split(radar_path: str, motor_path: str, segment_length: float):
     """
     Split one radar measurement + motor log into equal time segments.
 
@@ -125,6 +125,15 @@ def allign_and_split(radar_path: str, motor_path: str, segment_length: float):
 
     radar_cube, timestamps, time_cube = load_radar(radar_path)
     motor_times, motor_positions = load_motor_log(motor_path)
+    rx1 = radar_cube[0, :, :]
+    rx2 = radar_cube[1, :, :]
+
+    rx1_cf = remove_clutter(rx1)
+    rx2_cf = remove_clutter(rx2)
+    rx1_cf = detrend(rx1_cf)
+    rx2_cf = detrend(rx2_cf)
+    radar_cube[0, :, :] = rx1_cf
+    radar_cube[1, :, :] = rx2_cf
 
     print("Full radar shape:", radar_cube.shape)
 
@@ -413,6 +422,12 @@ def plot_both(data1, data2):
     plt.show()
 
 
+def basic_info_extraction2(radar_cube):
+    rx1 = radar_cube[0, :, :] #old was without time stamps so directly data
+    rx2 = radar_cube[1, :, :]
+
+    return rx1, rx2
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Basic Info Extraction
 # ─────────────────────────────────────────────────────────────────────────────
@@ -530,7 +545,7 @@ def plot_motor(times, positions):
 #────────────────────────────────────────────────────────────────────────────
 
 
-segments = allign_and_split(RADAR, MOTOR, segment_length=40.0)
+segments = align_and_split(RADAR, MOTOR, segment_length=40.0)
 
 calibration_models = []
 all_segments = []
@@ -546,10 +561,10 @@ for i in range(len(segments)):
         print("Skipping (not enough data)")
         continue
 
-    rx1, rx2, rx1_cf, rx2_cf, *_ = basic_info_extraction(radar_cube_seg)
+    #rx1, rx2, rx1_cf, rx2_cf, *_ = basic_info_extraction(radar_cube_seg)
+    rx1, rx2, *_ = basic_info_extraction2(radar_cube_seg)
 
-
-    M_both = np.hstack([rx1_cf, rx2_cf])
+    M_both = np.hstack([rx1, rx2])
 
     if i == 0:
         reference_mean = np.mean(M_both, axis=0)
