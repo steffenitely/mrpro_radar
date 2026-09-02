@@ -43,22 +43,6 @@ MOTOR_EPOCH: datetime.datetime | None = None
 # ─────────────────────────────────────────────────────────────────────────────
 # Load & parse the motor log
 # ─────────────────────────────────────────────────────────────────────────────
-def load_calibration_log(path: str) -> tuple[np.ndarray, np.ndarray]:
-    """Return (times_sec, positions) arrays from the JSON motor log."""
-    with open(path) as f:
-        log = json.load(f)
-
-    entries = log["motor_log"]
-    times = np.array([e["t"] for e in entries], dtype=float)
-    try:
-        positions = np.array([ACTION_MAP[e["action"]] for e in entries], dtype=float)
-    except KeyError as exc:
-        raise KeyError(
-            f"Action label {exc} is not in ACTION_MAP. "
-            f"Add it with a numeric value."
-        ) from exc
-
-    return times, positions
 
 def load_motor_log(path: str) -> tuple[np.ndarray, np.ndarray]:
     """Return (times_sec, positions) arrays from the JSON motor log."""
@@ -161,7 +145,6 @@ def align_and_split(radar_path: str, motor_path: str, segment_length: float):
 
     segments = []
 
-
     # -------------------------
     # Split into chunks
     # -------------------------
@@ -170,13 +153,11 @@ def align_and_split(radar_path: str, motor_path: str, segment_length: float):
         start = i * segment_length
         end = (i + 1) * segment_length
 
-
         # Radar mask
         radar_mask = (
             (radar_t_sec >= start) &
             (radar_t_sec < end)
         )
-
 
         # Motor mask
         motor_mask = (
@@ -192,7 +173,6 @@ def align_and_split(radar_path: str, motor_path: str, segment_length: float):
         motor_times_segment = motor_t_aligned[motor_mask]
         motor_positions_segment = motor_positions[motor_mask]
 
-
         segments.append(
             (
                 radar_segment,
@@ -202,14 +182,12 @@ def align_and_split(radar_path: str, motor_path: str, segment_length: float):
             )
         )
 
-
         print(
             f"Segment {i}: "
             f"Radar frames={radar_segment.shape[1]}, "
             f"Motor samples={len(motor_positions_segment)}, "
             f"time={start:.1f}-{end:.1f}s"
         )
-
 
     return segments
 
@@ -330,50 +308,6 @@ def remove_clutter(radar_data_data):
 
 def highpass_clutter(radar_data):
     return detrend(radar_data, axis=0)
-
-def select_range_bin(radar_data):
-    energy = np.var(radar_data, axis=0)
-    return np.argmax(energy)
-
-def extract_signal(radar_data, range_bin):
-    return radar_data[:, range_bin]   # shape: (T,)
-
-def align_radar(radar, peaks, ref_bin=200):
-    T, R = radar.shape
-    aligned = np.zeros_like(radar)
-
-    for t in range(T):
-        shift = ref_bin - peaks[t]
-        aligned[t] = np.roll(radar[t], shift)
-
-    return aligned
-
-def find_peaks_per_frame(radar):
-    # radar: (T, R)
-    peaks = np.argmax(radar, axis=1)   # shape: (T,)
-    return peaks
-
-
-def plot_both(data1, data2):
-    rx1, rx2 = data1, data2
-
-    # Shared color scale (important for correlation comparability)
-    vmin = min(rx1.min(), rx2.min())
-    vmax = max(rx1.max(), rx2.max())
-
-    fig, axes = plt.subplots(1, 2, figsize=(12, 5), constrained_layout=True)
-
-    im0 = axes[0].imshow(rx1, cmap="viridis", vmin=vmin, vmax=vmax, interpolation="nearest", aspect="auto")
-    axes[0].set_title("Channel 0 (Correlation)")
-
-    im1 = axes[1].imshow(rx2, cmap="viridis", vmin=vmin, vmax=vmax, interpolation="nearest", aspect="auto")
-    axes[1].set_title("Channel 1 (Correlation)")
-
-    # One shared colorbar placed on the RIGHT side
-    cbar = fig.colorbar(im1, ax=axes, location="right", shrink=0.9, pad=0.02)
-    cbar.set_label("Correlation strength")
-
-    plt.show()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -547,7 +481,7 @@ for i in range(len(segments)):
 
     mean = reference_mean if reference_mean is not None else np.mean(M_both, axis=0)
     
-    M_centered = M_both - mean
+    M_centered = M_both #- mean
 
     all_segments.append({
         "segment": i,
@@ -572,39 +506,6 @@ for i in range(len(segments)):
 
     X = M_centered  # Use raw data directly
 
-    # ─────────────────────────────────────
-    # Trim extremes (row-wise based on first feature)
-    # # ─────────────────────────────────────
-    # x_energy = np.mean(np.abs(X), axis=1)  # mean energy per timeframe
-    # xmin, xmax = x_energy.min(), x_energy.max()
-    # span = xmax - xmin
-
-    # lower = xmin + 0.03 * span
-    # upper = xmax - 0.03 * span
-
-    # mask = (x_energy >= lower) & (x_energy <= upper)
-
-    # X_trimmed = X[mask]
-    # y_trimmed = y[mask]
-
-
-    # # ─────────────────────────────────────
-    # # Downsample static regions (FIXED)
-    # # ─────────────────────────────────────
-    # dy = np.abs(np.diff(y_trimmed, prepend=y_trimmed[0]))
-
-    # motion_mask = dy > 1e-4
-    # keep_mask = motion_mask.copy()
-
-    # # keep every 10th static sample
-    # keep_mask[~motion_mask] = np.arange(len(y_trimmed))[~motion_mask] % 30 == 0
-
-    # X_filtered = X_trimmed[keep_mask]
-    # y_filtered = y_trimmed[keep_mask].reshape(-1, 1)
-
-    # ─────────────────────────────────────
-    # Train model
-    # ─────────────────────────────────────
 
 
     y = y.reshape(-1, 1)
@@ -698,7 +599,7 @@ for i, calibration in enumerate(calibration_models):
         # IMPORTANT:
         # use calibration mean
         # -------------------------------
-        M_test_centered = M_test - mean
+        M_test_centered = M_test #- mean
 
         # ─────────────────────────────────────────────────────────────────────────────
         # Use raw radar data directly
