@@ -42,6 +42,7 @@ for d in [motor_pca_dir, regression_dir, single_model_dir, cal_test_dir, cal_mat
     os.makedirs(d, exist_ok=True)
 # ══════════════════════════════════════════════════════════════════════════════
 MOTOR_EPOCH: datetime.datetime | None = None
+SEGMENT_LENGTH = 40.0
 # ══════════════════════════════════
 
 
@@ -95,6 +96,12 @@ def radar_times_to_sec(radar_datetimes: list[datetime.datetime]) -> np.ndarray:
     t0 = radar_datetimes[0]
     return np.array([(dt - t0).total_seconds() for dt in radar_datetimes])
 
+
+def radar_times_to_seconds(radar_datetimes) -> np.ndarray:
+    start = radar_datetimes[0]
+    return np.array([(timestamp - start).total_seconds() for timestamp in radar_datetimes])
+
+
 def align_and_split(radar_path: str, motor_path: str, segment_length: float):
     """
     Split one radar measurement + motor log into equal time segments.
@@ -125,12 +132,12 @@ def align_and_split(radar_path: str, motor_path: str, segment_length: float):
     radar_cube, timestamps, time_cube = load_radar(radar_path)
     rx1 = radar_cube[0, :, :]
     rx2 = radar_cube[1, :, :]
-    rx1_cf = remove_clutter(rx1)
-    rx2_cf = remove_clutter(rx2)
-    rx1_cf = detrend(rx1_cf)
-    rx2_cf = detrend(rx2_cf)
-    radar_cube[0, :, :] = rx1_cf
-    radar_cube[1, :, :] = rx2_cf
+    # rx1_cf = remove_clutter(rx1)
+    # rx2_cf = remove_clutter(rx2)
+    # rx1_cf = detrend(rx1_cf)
+    # rx2_cf = detrend(rx2_cf)
+    # radar_cube[0, :, :] = rx1_cf
+    # radar_cube[1, :, :] = rx2_cf
 
     motor_times, motor_positions = load_motor_log(motor_path)
 
@@ -215,6 +222,45 @@ def align_and_split(radar_path: str, motor_path: str, segment_length: float):
             f"time={start:.1f}-{end:.1f}s"
         )
 
+
+    return segments
+
+
+def align_and_split2(
+    radar_cube: np.ndarray,
+    radar_times: np.ndarray,
+    motor_times: np.ndarray,
+    motor_positions: np.ndarray,
+    segment_length: float,
+) -> list[dict]:
+    n_segments = int(np.floor(radar_times[-1] / segment_length))
+    segments = []
+
+    for segment_id in range(n_segments):
+        start = segment_id * segment_length
+        end = (segment_id + 1) * segment_length
+        radar_mask = (radar_times >= start) & (radar_times < end)
+        if np.count_nonzero(radar_mask) < 2:
+            continue
+
+        radar_segment = radar_cube[:, radar_mask, :]
+        segment_radar_times = radar_times[radar_mask]
+        motor_mask = (motor_times >= start) & (motor_times < end)
+
+        # segments.append({
+        #     "radar_segment": radar_segment,
+        #     "radar_times": segment_radar_times,
+        #     "motor_times": motor_times[motor_mask],
+        #     "motor_positions": motor_positions[motor_mask],
+        # })
+
+        segments.append(
+                (
+                    radar_segment,
+                    segment_radar_times,
+                    motor_times[motor_mask],
+                    motor_positions[motor_mask],
+                ))
 
     return segments
 
@@ -568,7 +614,26 @@ def plot_motor(times, positions):
 #────────────────────────────────────────────────────────────────────────────
 
 
-segments = align_and_split(RADAR, MOTOR, segment_length=40.0)
+#segments = align_and_split(RADAR, MOTOR, segment_length=40.0)
+
+radar_cube, _, time_cube = load_radar(RADAR)
+raw_motor_times, motor_positions = load_motor_log(MOTOR)
+radar_times = radar_times_to_seconds(time_cube[0, :])
+motor_times = align_motor_to_radar(raw_motor_times, time_cube[0, :], MOTOR_EPOCH)
+
+rx1 = radar_cube[0, :, :]
+rx2 = radar_cube[1, :, :] 
+
+rx1 = remove_clutter(rx1)
+rx2 = remove_clutter(rx2)
+rx1 = detrend(rx1)
+rx2 = detrend(rx2)
+
+radar_cube[0, :, :] = rx1
+radar_cube[1, :, :] = rx2
+
+
+segments = align_and_split2(radar_cube, radar_times, motor_times, motor_positions, SEGMENT_LENGTH)
 
 calibration_models = []
 all_segments = []

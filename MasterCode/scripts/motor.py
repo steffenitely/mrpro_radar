@@ -46,24 +46,9 @@ class MotorController:
             if time.time() - start > timeout:
                 raise TimeoutError("Reference timeout")
 
-            time.sleep(0.1)
-
-    def check_if_ready_old(self, timeout=30):
-        start = time.time()
-        while True:
-            self.ser.write(b"\r")
-            resp = self.ser.read_all().decode(errors="ignore")
-            print(resp)
-
-            if resp[4:].startswith("6006"):
-                return
-
-            if time.time() - start > timeout:
-                raise TimeoutError("Motor timeout")
-
             time.sleep(0.05)
 
-    def check_if_ready(self, start_time=None, logger=None, timeout=30):
+    def wait_until_ready(self, start_time=None, logger=None, timeout=30):
         local_start = time.perf_counter()
 
         while True:
@@ -97,7 +82,7 @@ class MotorController:
 
             time.sleep(0.05)
 
-    def get_current_position(self):
+    def get_position(self):
         self.ser.write("\r".encode())
 
         time.sleep(0.05)
@@ -160,7 +145,7 @@ class MotorController:
 
                         # check if done
                         if abs(pos - target) < 10:
-                            self.check_if_ready(start_time=start_time, logger=logger)
+                            self.wait_until_ready(start_time=start_time, logger=logger)
                             return
 
                         speed = self.get_speed_from_position(pos)
@@ -223,19 +208,7 @@ class MotorController:
             time.sleep(0.05)  # adjust smoothness
 
         # ensure motion completes
-        self.check_if_ready(start_time=start_time, logger=logger)
-        
-    def move_to_a(self, start_time=None, logger=None):
-        self.send("8405002300000001\r")
-        self.send("0401002300001770\r")
-        self.send("8405002300000001\r")
-        self.check_if_ready(start_time=start_time, logger=logger)
-
-    def move_to_zero(self, start_time=None, logger=None):
-        self.send("840500230000000F\r")
-        self.send("0401002300000000\r")
-        self.send("840500230000000F\r")
-        self.check_if_ready(start_time=start_time, logger=logger)
+        self.wait_until_ready(start_time=start_time, logger=logger)     
 
     def move_to(self, position, speed="F", start_time=None, logger=None):
         """

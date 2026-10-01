@@ -53,7 +53,7 @@ limit = np.percentile(np.abs(rx1_change), 99)
 
 im1 = axes[0, 1].imshow(
     rx1_change,
-    cmap="seismic",
+    #cmap="seismic",
     vmin=-limit,
     vmax=limit,
     aspect="auto",
@@ -82,7 +82,7 @@ limit = np.percentile(np.abs(rx2_change), 99)
 
 im3 = axes[1, 1].imshow(
     rx2_change,
-    cmap="seismic",
+    #cmap="seismic",
     vmin=-limit,
     vmax=limit,
     aspect="auto",

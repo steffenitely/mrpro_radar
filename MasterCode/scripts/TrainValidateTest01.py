@@ -14,7 +14,7 @@ wandb.init(
     config={
         "segment_length": 40.0,
         "model": "PyTorch MLP with direct segmented radar data",
-        "input_type": "clutter_removed_detrended_radar",
+        "input_type": "only_radar",
         "trim_ratio": 0.03
     }
 )
@@ -24,8 +24,19 @@ wandb.init(
 # ══════════════════════════════════════════════════════════════════════════════
 # Calibrate and rnd Movement
 #Both done in one measurement
-RADAR = "Data/RadarTest/radar_20260729_145247.npz"
-MOTOR = "Data/TimeLogs/time_log_20260729_145342.json"  
+RADAR = "Data/RadarTest/radar_20260908_162647.npz"
+MOTOR = "Data/TimeLogs/time_log_20260908_162707.json"  
+
+# RADAR = "Data/RadarTest/radar_20260904_111612.npz"
+# MOTOR = "Data/TimeLogs/time_log_20260904_111649.json"  
+
+
+RADAR2 = "Data/RadarTest/radar_20260908_163259.npz"
+MOTOR2 = "Data/TimeLogs/time_log_20260908_163334.json"
+
+
+# RADAR3 = "Data/RadarTest/radar_20260826_133158.npz"
+# MOTOR3 = "Data/TimeLogs/time_log_20260826_135221.json"
 
 save_dir = "Data/calibration_plots/TrainValidateTest/00"
 
@@ -112,7 +123,7 @@ def prepare_segments(
 
         M_both = np.hstack([rx1, rx2])
 
-        M_centered = M_both - reference_mean
+        M_centered = M_both #- reference_mean
 
         y_aligned = np.interp(
             radar_times,
@@ -174,12 +185,12 @@ def align_and_split(radar_path: str, motor_path: str, segment_length: float):
     motor_times, motor_positions = load_motor_log(motor_path)
     rx1 = radar_cube[0, :, :]
     rx2 = radar_cube[1, :, :]
-    rx1_cf = remove_clutter(rx1)
-    rx2_cf = remove_clutter(rx2)
-    rx1_cf = detrend(rx1_cf, axis=0)
-    rx2_cf = detrend(rx2_cf, axis=0)
-    radar_cube[0, :, :] = rx1_cf
-    radar_cube[1, :, :] = rx2_cf
+    # rx1_cf = remove_clutter(rx1)
+    # rx2_cf = remove_clutter(rx2)
+    # rx1_cf = detrend(rx1_cf, axis=0)
+    # rx2_cf = detrend(rx2_cf, axis=0)
+    # radar_cube[0, :, :] = rx1_cf
+    # radar_cube[1, :, :] = rx2_cf
     
 
     print("Full radar shape:", radar_cube.shape)
@@ -696,10 +707,16 @@ def plot_motor(times, positions):
 # CONFIGURATION
 # ============================================================
 
+# TRAIN_SEGMENTS = [1, 2, 3, 4]
+# VALIDATION_SEGMENTS = [5, 6]
+# TEST_SEGMENTS = [7, 8, 9, 10, 11, 12, 13]
+# REFERENCE_SEGMENT = 0
+
 TRAIN_SEGMENTS = [1, 2, 3, 4]
-VALIDATION_SEGMENTS = [5, 6]
-TEST_SEGMENTS = [7, 8, 9, 10, 11, 12, 13]
+VALIDATION_SEGMENTS = [5, 6, 7]
+TEST_SEGMENTS = [8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19 , 20] # 
 REFERENCE_SEGMENT = 0
+
 
 # Keep the old names around for compatibility with the rest of the code
 # while the actual model training uses train/val/test split semantics.
@@ -716,6 +733,22 @@ segments = align_and_split(
     segment_length=40.0
 )
 
+
+#append segments from second radar and motor log
+segments_2 = align_and_split(
+    RADAR2,
+    MOTOR2,
+    segment_length=40.0
+)
+segments.extend(segments_2)
+
+
+# segments_3 = align_and_split(
+#     RADAR3,
+#     MOTOR3,
+#     segment_length=40.0
+# )
+# segments.extend(segments_3)
 
 # ============================================================
 # 2. PREPARE DATA
@@ -776,7 +809,7 @@ for i, segment in enumerate(segments):
     # Apply SAME reference mean to every segment
     # --------------------------------------------------------
 
-    M_centered = M_both - reference_mean
+    M_centered = M_both# - reference_mean
 
 
     # --------------------------------------------------------
@@ -1244,41 +1277,20 @@ test_rmse_matrix = np.array([
 ])
 
 
-plt.figure(
-    figsize=(10, 3)
-)
+plt.figure(figsize=(10, 3))
 
+plt.imshow(test_rmse_matrix, aspect="auto")
 
-plt.imshow(
-    test_rmse_matrix,
-    aspect="auto"
-)
+plt.colorbar(label="RMSE in cm")
 
+plt.xticks(range(len(TEST_SEGMENTS)), TEST_SEGMENTS)
 
-plt.colorbar(
-    label="RMSE"
-)
-
-
-plt.xticks(
-    range(len(TEST_SEGMENTS)),
-    TEST_SEGMENTS
-)
-
-
-plt.yticks(
-    [0],
-    [f"Calibration S{CALIBRATION_SEGMENT}"]
-)
-
+plt.yticks([0], [f"Calibration S{CALIBRATION_SEGMENT}"])
 
 plt.xlabel("Test segment")
-
 plt.ylabel("Calibration model")
 
-plt.title(
-    "Final Test Performance - RMSE"
-)
+plt.title("Final Test Performance - RMSE")
 
 
 filename = os.path.join(

@@ -1,3 +1,4 @@
+from asyncio.log import logger
 import threading
 import time
 import json
@@ -69,7 +70,6 @@ def calibrate_movement(motor, start_time):
         log_motor("0", start_time)
         time.sleep(1)
         log_motor("0", start_time)
-
 
 def rndm_movement(motor, start_time):
     log_motor(0, start_time)
@@ -167,7 +167,7 @@ def scheduled_phase_movement(motor, start_time):
         speed = "1"
         
         # move to target
-        current_pos = motor.get_current_position()
+        current_pos = motor.get_position()
         log_motor(current_pos, start_time)
         motor.move_to(target_pos, speed, start_time=start_time, logger=log_motor_raw)
         log_motor(target_pos, start_time)
@@ -180,7 +180,7 @@ def scheduled_phase_movement(motor, start_time):
         print("reached 0")
         # wait remaining time
         while now(start_time) < phase_end:
-            current_pos = motor.get_current_position()
+            current_pos = motor.get_position()
             log_motor(current_pos, start_time)
             time.sleep(0.05)
             #("waiting...")
@@ -190,7 +190,7 @@ def scheduled_phase_movement(motor, start_time):
         speed = "1"
         
         # move to target
-        current_pos = motor.get_current_position()
+        current_pos = motor.get_position()
         log_motor(current_pos, start_time)
         motor.move_to(low, speed, start_time=start_time, logger=log_motor_raw)
         log_motor(low, start_time)
@@ -208,7 +208,7 @@ def scheduled_phase_movement(motor, start_time):
         print("reached low")
         # wait remaining time
         while now(start_time) < phase_end:
-            current_pos = motor.get_current_position()
+            current_pos = motor.get_position()
             log_motor(current_pos, start_time)
             time.sleep(0.05)
             #("waiting...")       
@@ -218,12 +218,12 @@ def scheduled_phase_movement(motor, start_time):
         speed = "1"
 
 
-        current_pos = motor.get_current_position()
+        current_pos = motor.get_position()
         log_motor(current_pos, start_time)
         if current_pos != mid:
             print(f"Current position {current_pos} is not at mid {mid}. Moving to mid first.")
             motor.move_to(mid, speed, start_time=start_time, logger=log_motor_raw)
-            motor.check_if_ready()
+            motor.wait_until_ready(start_time=start_time, logger=logger)
             log_motor(mid, start_time)
             time.sleep(0.5)
 
@@ -253,7 +253,7 @@ def scheduled_phase_movement(motor, start_time):
 
         # idle logging until phase ends
         while now(start_time) < phase_end:
-            current_pos = motor.get_current_position()
+            current_pos = motor.get_position()
             log_motor(current_pos, start_time)
             time.sleep(0.05)
 
@@ -264,7 +264,7 @@ def scheduled_phase_movement(motor, start_time):
             speed = random.choice(speed_choices)
 
             #L
-            current_pos = motor.get_current_position()
+            current_pos = motor.get_position()
             log_motor(current_pos, start_time)
             motor.move_to(pos, speed, start_time=start_time, logger=log_motor_raw)
             log_motor(pos, start_time)
@@ -274,17 +274,17 @@ def scheduled_phase_movement(motor, start_time):
     def run_stationary(mid, phase_end):
         """Stay still at mid position."""
         speed = "1"
-        current_pos = motor.get_current_position()
+        current_pos = motor.get_position()
         if current_pos != mid:
             print(f"Current position {current_pos} is not at mid {mid}. Moving to mid first.")
             motor.move_to(mid, speed, start_time=start_time, logger=log_motor_raw)
-            motor.check_if_ready()
+            motor.wait_until_ready(start_time=start_time, logger=logger)
             log_motor(mid, start_time)
 
         print("Stationary phase at mid position")
 
         while now(start_time) < phase_end:
-            current_pos = motor.get_current_position()
+            current_pos = motor.get_position()
             log_motor(current_pos, start_time)
             time.sleep(0.05)
 
@@ -366,6 +366,18 @@ def scheduled_phase_movement(motor, start_time):
         ("random", (2750, 3250)),
         ("random", (0, 3000)),
         ("random", (3000, 6000)),
+
+        ("random", (3000, 6000))
+        ("random", (4000, 6000)),
+        ("random", (5000, 6000)),
+        ("random", (5500, 6000)),
+
+        ("random", (0, 3000)),
+        ("random", (0, 2000)),
+        ("random", (0, 1000)),
+        ("random", (0, 500)),
+
+        ("random", (0, 6000)),
     ]
     
     
@@ -420,7 +432,7 @@ def main():
     motor.reference()
     time.sleep(2) # some wait needed so motor can adjust and to leave the room so radar doesnt have any other movement it can pick up
     motor.move_to(3000, 1, None, None)
-    motor.check_if_ready()
+    motor.wait_until_ready()
     time.sleep(0.5)
 
     #radar_thread = threading.Thread(target=radar_worker)
