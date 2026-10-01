@@ -1,6 +1,5 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from scipy.constants import c
 
 # Load data
 #data_path = Path(__file__).resolve().parents[2] / "Data" / "RadarTest" / "radar_20260618_153139.npy"
@@ -14,39 +13,74 @@ rx1, rx2 = data[0], data[1]
 vmin = min(rx1.min(), rx2.min())
 vmax = max(rx1.max(), rx2.max())
 
-fig, axes = plt.subplots(1, 2, figsize=(12, 5), constrained_layout=True)
+fig, axes = plt.subplots(
+    2, 2,
+    figsize=(14, 9),
+    constrained_layout=True
+)
 
-im0 = axes[0].imshow(rx1, cmap="viridis", vmin=vmin, vmax=vmax, interpolation="nearest", aspect="auto")
-axes[0].set_title("Channel 0 (Correlation)")
+# RX1 original
+im0 = axes[0, 0].imshow(
+    rx1,
+    aspect="auto",
+    interpolation="nearest"
+)
+axes[0, 0].set_title("RX1 — Original")
+axes[0, 0].set_xlabel("Correlation bin")
+axes[0, 0].set_ylabel("Scan")
+fig.colorbar(im0, ax=axes[0, 0])
 
-im1 = axes[1].imshow(rx2, cmap="viridis", vmin=vmin, vmax=vmax, interpolation="nearest", aspect="auto")
-axes[1].set_title("Channel 1 (Correlation)")
 
-# One shared colorbar placed on the RIGHT side
-cbar = fig.colorbar(im1, ax=axes, location="right", shrink=0.9, pad=0.02)
-cbar.set_label("Correlation strength")
+# RX1 change
+limit = np.percentile(np.abs(rx1_change), 99)
 
-plt.show()
+im1 = axes[0, 1].imshow(
+    rx1_change,
+    #cmap="seismic",
+    vmin=-limit,
+    vmax=limit,
+    aspect="auto",
+    interpolation="nearest"
+)
+axes[0, 1].set_title("RX1 — Change from Static Background")
+axes[0, 1].set_xlabel("Correlation bin")
+axes[0, 1].set_ylabel("Scan")
+fig.colorbar(im1, ax=axes[0, 1])
 
 
-row_idx = rx1.shape[0] // 2  # middle row
-rx1_peak = np.argmax(rx1[row_idx])
-rx2_peak = np.argmax(rx2[row_idx])
+# RX2 original
+im2 = axes[1, 0].imshow(
+    rx2,
+    aspect="auto",
+    interpolation="nearest"
+)
+axes[1, 0].set_title("RX2 — Original")
+axes[1, 0].set_xlabel("Correlation bin")
+axes[1, 0].set_ylabel("Scan")
+fig.colorbar(im2, ax=axes[1, 0])
 
-time_difference = abs(rx1_peak-rx2_peak)*112e-12 # in ps
-distance = time_difference*c
-print(f"The distance is {distance} meters")
 
-fig2, ax = plt.subplots(figsize=(10, 4))
+# RX2 change
+limit = np.percentile(np.abs(rx2_change), 99)
 
-ax.plot(rx1[row_idx], label="Channel 0")
-ax.plot(rx2[row_idx], label="Channel 1", linestyle="--")
+im3 = axes[1, 1].imshow(
+    rx2_change,
+    #cmap="seismic",
+    vmin=-limit,
+    vmax=limit,
+    aspect="auto",
+    interpolation="nearest"
+)
+axes[1, 1].set_title("RX2 — Change from Static Background")
+axes[1, 1].set_xlabel("Correlation bin")
+axes[1, 1].set_ylabel("Scan")
+fig.colorbar(im3, ax=axes[1, 1])
 
-ax.set_title(f"Correlation vs Samples (Row {row_idx})")
-ax.set_xlabel("Sample index (0–509)")
-ax.set_ylabel("Correlation strength")
 
-ax.legend()
-ax.grid(True)
+plt.savefig(
+    "Data/Backyard/radar_change.png",
+    dpi=300,
+    bbox_inches="tight"
+)
 
 plt.show()

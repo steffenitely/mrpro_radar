@@ -189,29 +189,7 @@ def plot_radar_data(data):
 
     plt.show()
 
-    # # Distance estimation
-    # row_idx = rx1.shape[0] // 2
-    # rx1_peak = np.argmax(rx1[row_idx])
-    # rx2_peak = np.argmax(rx2[row_idx])
 
-    # time_difference = abs(rx1_peak - rx2_peak) * 112e-12
-    # distance = time_difference * c
-
-    # print(f"The distance is {distance} meters")
-
-    # fig2, ax = plt.subplots(figsize=(10, 4))
-
-    # ax.plot(rx1[row_idx], label="Channel 0")
-    # ax.plot(rx2[row_idx], label="Channel 1", linestyle="--")
-
-    # ax.set_title(f"Correlation vs Samples (Row {row_idx})")
-    # ax.set_xlabel("Sample index (0–509)")
-    # ax.set_ylabel("Correlation strength")
-
-    # ax.legend()
-    # ax.grid(True)
-
-    # plt.show()
 
 
 
