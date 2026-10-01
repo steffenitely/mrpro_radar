@@ -3,9 +3,10 @@ import matplotlib.pyplot as plt
 from scipy.constants import c
 
 # Load data
-data = np.load("RadarTest/radar_data_20260528_150339.npy")  # shape: (2, 441, 510)
+#data_path = Path(__file__).resolve().parents[2] / "Data" / "RadarTest" / "radar_20260618_153139.npy"
+data = np.load("Data/RadarTest/OLD/radar_data_20260603_144110.npy")  # shape: (2, 441, 510)
 
-print(data.shape)
+#print(data.shape)
 
 rx1, rx2 = data[0], data[1]
 

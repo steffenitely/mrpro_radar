@@ -1,8 +1,9 @@
 import serial
 import time
-import math
+
 
 class MotorController:
+    """Controller for the motor serial protocol."""
     def __init__(self, port="COM6"):
         self.ser = serial.Serial(
             port=port,
@@ -12,6 +13,9 @@ class MotorController:
             stopbits=serial.STOPBITS_ONE,
             timeout=1
         )
+
+
+
 
     def send(self, cmd):
         print("SEND:", cmd)
@@ -32,9 +36,9 @@ class MotorController:
     def reference(self):
         self.send("0401002800000003\r")
         self.send("840400280000000F\r")
-        self.check_if_referenced()
+        self._wait_until_referenced()
 
-    def check_if_referenced(self, timeout=30):
+    def _wait_until_referenced(self, timeout=30):
         start = time.time()
         while True:
             self.ser.write(b"\r")
@@ -69,7 +73,7 @@ class MotorController:
         while True:
             self.ser.write(b"\r")
             resp = self.ser.read_all().decode(errors="ignore")
-            #print(resp)
+            print(resp)
 
             # unified timestamp
             if start_time is not None:
@@ -103,6 +107,7 @@ class MotorController:
         time.sleep(0.1)
 
         resp = self.ser.read_all().decode(errors="ignore")
+        print("Current position response:", resp)    
 
         if not resp:
             raise TimeoutError("No response from motor")

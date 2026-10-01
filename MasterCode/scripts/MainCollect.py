@@ -220,6 +220,7 @@ def scheduled_phase_movement(motor, start_time):
 
         current_pos = motor.get_current_position()
         log_motor(current_pos, start_time)
+
         if current_pos != mid:
             print(f"Current position {current_pos} is not at mid {mid}. Moving to mid first.")
             motor.move_to(mid, speed, start_time=start_time, logger=log_motor_raw)
@@ -352,20 +353,31 @@ def scheduled_phase_movement(motor, start_time):
     phases_centered = [
         ("stationary", 3000),  # <-- your PCA mean segment
 
-        ("centered", (0, 3000, 6000)),
-        ("centered", (1000, 3000, 5000)),
-        ("centered", (1500, 3000, 4500)),
-        ("centered", (2000, 3000, 4000)),
-        ("centered", (2500, 3000, 3500)),
-        ("centered", (2750, 3000, 3250)),
+        #("centered", (0, 3000, 6000)),
+        # ("centered", (1000, 3000, 5000)),
+        # ("centered", (1500, 3000, 4500)),
+        # ("centered", (2000, 3000, 4000)),
+        # ("centered", (2500, 3000, 3500)),
+        # ("centered", (2750, 3000, 3250)),
 
         ("random", (0, 6000)),
-        ("random", (1000, 5000)),
-        ("random", (2000, 4000)),
-        ("random", (2500, 3500)),
-        ("random", (2750, 3250)),
-        ("random", (0, 3000)),
-        ("random", (3000, 6000)),
+        # ("random", (1000, 5000)),
+        # ("random", (2000, 4000)),
+        # ("random", (2500, 3500)),
+        # ("random", (2750, 3250)),
+        # ("random", (0, 3000)),
+        # ("random", (3000, 6000)),
+        
+        # #some more segments
+        # ("random", (4000, 6000)),
+        # ("random", (5000, 6000)),
+        # ("random", (5500, 6000)),
+
+        # ("random", (0, 3000)),
+        # ("random", (0, 2000)),
+        # ("random", (0, 1000)),
+        # ("random", (0, 500)),
+
     ]
     
     
@@ -417,7 +429,9 @@ def main():
 
     motor = MotorController()
     motor.initiate()
+    print("Motor initiated")
     motor.reference()
+    print("Motor referenced")
     time.sleep(2) # some wait needed so motor can adjust and to leave the room so radar doesnt have any other movement it can pick up
     motor.move_to(3000, 1, None, None)
     motor.check_if_ready()
