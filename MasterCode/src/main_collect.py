@@ -49,12 +49,12 @@ def centered_phases():
     phases = [MovementPhase("stationary", position=3000)]
 
     for low, high in (
-        (0, 6000),
-#       (1000, 5000),
-#       (1500, 4500),
-#       (2000, 4000),
-        (2500, 3500),
-        (2750, 3250),
+       (0, 6000),
+       (1000, 5000),
+       (1500, 4500),
+       (2000, 4000),
+       (2500, 3500),
+       (2750, 3250),
     ):
         phases.append(
             MovementPhase(
@@ -69,18 +69,18 @@ def centered_phases():
         (0, 6000),
         (1000, 5000),
         (2000, 4000),
-#        (2500, 3500),
+        (2500, 3500),
         (2750, 3250),
         (0, 3000),
- #       (3000, 6000),
- #       (4000, 6000),
- #       (5000, 6000),
+        (3000, 6000),
+        (4000, 6000),
+        (5000, 6000),
         (5500, 6000),
- #       (0, 3000),
- #       (0, 2000),
- #       (0, 1000),
+        (0, 3000),
+        (0, 2000),
+        (0, 1000),
         (0, 500),
- #       (0, 6000),
+        (0, 6000),
     ):
         phases.append(
             MovementPhase(
@@ -122,20 +122,20 @@ def main(motor=None, radar=None):
             print(f"Phase: {phase.type}\nlow: {phase.low}, high: {phase.high}, speed choices: {phase.speed_choices}\n")
 
 
-    start_time = time.perf_counter()
+
+    motor.initiate()
+    motor.reference()
+    time.sleep(2)
+    motor.move_to(3000, speed="1") #initial movement so motor is in correct state before starting radar acquisition
+    time.sleep(1)
+    
     radar_thread = threading.Thread(
         target=radar_worker,
         args=(radar, stop_event, radar_result, save_data),
     )
+    start_time = time.perf_counter()
 
     try:
-        motor.initiate()
-        motor.reference()
-        time.sleep(2)
-        motor.move_to(3000, speed="1") #initial movement so motor is in correct state before starting radar acquisition
-        time.sleep(1)
-       
-        
         radar_thread.start()
         time.sleep(1)
         print("Starting Movement")
