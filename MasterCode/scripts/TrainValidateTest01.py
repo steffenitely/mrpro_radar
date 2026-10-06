@@ -24,15 +24,15 @@ wandb.init(
 # ══════════════════════════════════════════════════════════════════════════════
 # Calibrate and rnd Movement
 #Both done in one measurement
-RADAR = "Data/RadarTest/radar_20260908_162647.npz"
-MOTOR = "Data/TimeLogs/time_log_20260908_162707.json"  
+RADAR = "Data/RadarTest/radar_20261006_101018.npz"
+MOTOR = "Data/TimeLogs/time_log_20261006_104058.json"  
 
 # RADAR = "Data/RadarTest/radar_20260904_111612.npz"
 # MOTOR = "Data/TimeLogs/time_log_20260904_111649.json"  
 
 
-RADAR2 = "Data/RadarTest/radar_20260908_163259.npz"
-MOTOR2 = "Data/TimeLogs/time_log_20260908_163334.json"
+# RADAR2 = "Data/RadarTest/radar_20260908_163259.npz"
+# MOTOR2 = "Data/TimeLogs/time_log_20260908_163334.json"
 
 
 # RADAR3 = "Data/RadarTest/radar_20260826_133158.npz"
@@ -73,9 +73,9 @@ def load_motor_log(path: str) -> tuple[np.ndarray, np.ndarray]:
 def load_radar(path: str):
     data = np.load(path, allow_pickle=True) #.npy for before 9.6
     radar_cube = data["radar_cube"] #old data before 9.6. was without cube so these steps need to be excluded
-    timestamps = data["timestamps"]
+    #timestamps = data["timestamps"]
     time_cube = data["time_cube"]
-    return radar_cube, timestamps, time_cube
+    return radar_cube, time_cube
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -181,7 +181,7 @@ def align_and_split(radar_path: str, motor_path: str, segment_length: float):
         )
     """
 
-    radar_cube, timestamps, time_cube = load_radar(radar_path)
+    radar_cube, time_cube = load_radar(radar_path)
     motor_times, motor_positions = load_motor_log(motor_path)
     rx1 = radar_cube[0, :, :]
     rx2 = radar_cube[1, :, :]
@@ -714,7 +714,7 @@ def plot_motor(times, positions):
 
 TRAIN_SEGMENTS = [1, 2, 3, 4]
 VALIDATION_SEGMENTS = [5, 6, 7]
-TEST_SEGMENTS = [8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19 , 20] # 
+TEST_SEGMENTS = [8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19 , 20, 21] # 
 REFERENCE_SEGMENT = 0
 
 
@@ -735,12 +735,12 @@ segments = align_and_split(
 
 
 #append segments from second radar and motor log
-segments_2 = align_and_split(
-    RADAR2,
-    MOTOR2,
-    segment_length=40.0
-)
-segments.extend(segments_2)
+# segments_2 = align_and_split(
+#     RADAR2,
+#     MOTOR2,
+#     segment_length=40.0
+# )
+# segments.extend(segments_2)
 
 
 # segments_3 = align_and_split(
