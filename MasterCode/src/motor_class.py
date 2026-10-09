@@ -115,7 +115,6 @@ class MotorController:
                     time.sleep(0.05)
                     return
 
-            time.sleep(0.05)
 
         self.debug_buffers()
         raise TimeoutError(
@@ -130,11 +129,11 @@ class MotorController:
     def _send_command(self, cmd):
         self.ser.write(cmd.encode())
         self.ser.flush()
-        time.sleep(0.05)
 
         messages = self._read_messages()
         self._process_position_messages(messages)
-
+        
+        time.sleep(0.05)
         return messages
 
     

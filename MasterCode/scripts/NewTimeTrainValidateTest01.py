@@ -24,8 +24,8 @@ wandb.init(
 # ══════════════════════════════════════════════════════════════════════════════
 # Calibrate and rnd Movement
 #Both done in one measurement
-RADAR = "Data/RadarTest/radar_20261008_155631.npz"
-MOTOR = "Data/TimeLogs/time_log_20261008_160145.json"  
+RADAR = "Data/RadarTest/radar_20261008_153802.npz"
+MOTOR = "Data/TimeLogs/time_log_20261008_153847.json"  
 
 # RADAR = "Data/RadarTest/radar_20260904_111612.npz"
 # MOTOR = "Data/TimeLogs/time_log_20260904_111649.json"  
@@ -183,33 +183,24 @@ def align_and_split(radar_path: str, motor_path: str, segment_length: float):
 
     radar_cube, time_cube = load_radar(radar_path)
     motor_times, motor_positions = load_motor_log(motor_path)
-    rx1 = radar_cube[0, :, :]
-    rx2 = radar_cube[1, :, :]
-    # rx1_cf = remove_clutter(rx1)
-    # rx2_cf = remove_clutter(rx2)
-    # rx1_cf = detrend(rx1_cf, axis=0)
-    # rx2_cf = detrend(rx2_cf, axis=0)
-    # radar_cube[0, :, :] = rx1_cf
-    # radar_cube[1, :, :] = rx2_cf
-    
+
+    recorded_radar_times = np.asarray(time_cube[0, :])
+
+    if np.issubdtype(recorded_radar_times.dtype, np.number):
+        radar_origin = recorded_radar_times[0]
+        radar_t_sec = recorded_radar_times.astype(float) - radar_origin
+        motor_t_aligned = motor_times - radar_origin
+    else:
+        # Legacy recordings contain datetime radar timestamps.
+        radar_t_sec = radar_times_to_sec(recorded_radar_times)
+        motor_t_aligned = align_motor_to_radar(
+            motor_times,
+            recorded_radar_times,
+            MOTOR_EPOCH,
+        )
+
 
     print("Full radar shape:", radar_cube.shape)
-
-    # -------------------------
-    # Radar time
-    # -------------------------
-    radar_datetimes = time_cube[0, :]
-    radar_t_sec = radar_times_to_sec(radar_datetimes)
-
-
-    # -------------------------
-    # Align motor to radar timebase
-    # -------------------------
-    motor_t_aligned = align_motor_to_radar(
-        motor_times,
-        radar_datetimes,
-        MOTOR_EPOCH
-    )
 
 
     # -------------------------
@@ -293,7 +284,6 @@ def align_motor_to_radar(
         offset = (motor_epoch - radar_t0).total_seconds()
 
     return motor_times + offset
-
     
 # ─────────────────────────────────────────────────────────────────────────────
 # PyTorch Model with Configurable Input Size
@@ -697,646 +687,261 @@ def plot_motor(times, positions):
     plt.show()
 
 
-
-#==============================================================MAIN===========================================
-#────────────────────────────────────────────────────────────────────────────
-
-
-
-# ============================================================
-# CONFIGURATION
-# ============================================================
-
 TRAIN_SEGMENTS = [1, 2, 3, 4]
 VALIDATION_SEGMENTS = [5, 6]
 TEST_SEGMENTS = [7, 8, 9, 10, 11, 12, 13]
 REFERENCE_SEGMENT = 0
-
-# TRAIN_SEGMENTS = [1, 2, 3, 4]
-# VALIDATION_SEGMENTS = [5, 6, 7]
-# TEST_SEGMENTS = [8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19 , 20, 21] # 
-# REFERENCE_SEGMENT = 0
-
-
-# Keep the old names around for compatibility with the rest of the code
-# while the actual model training uses train/val/test split semantics.
 CALIBRATION_SEGMENT = TRAIN_SEGMENTS
 
 
-# ============================================================
-# 1. LOAD AND SPLIT DATA
-# ============================================================
+def stack_dataset(dataset, split_name):
+    if not dataset:
+        raise ValueError(f"No segments available for {split_name} split")
 
-segments = align_and_split(
-    RADAR,
-    MOTOR,
-    segment_length=40.0
-)
+    features = np.vstack([segment["X"] for segment in dataset])
+    targets = np.concatenate([segment["y"] for segment in dataset]).reshape(-1, 1)
+    return features, targets
 
 
-#append segments from second radar and motor log
-# segments_2 = align_and_split(
-#     RADAR2,
-#     MOTOR2,
-#     segment_length=40.0
-# )
-# segments.extend(segments_2)
-
-
-# segments_3 = align_and_split(
-#     RADAR3,
-#     MOTOR3,
-#     segment_length=40.0
-# )
-# segments.extend(segments_3)
-
-# ============================================================
-# 2. PREPARE DATA
-# ============================================================
-
-prepared_segments = []
-reference_mean = None
-
-for i, segment in enumerate(segments):
-
-    radar_cube_seg, radar_times, motor_times, motor_positions = segment
-
-    print(f"\n--- Segment {i} ---")
-
-    # --------------------------------------------------------
-    # Skip empty / invalid segments
-    # --------------------------------------------------------
-
-    if len(radar_times) == 0 or len(motor_times) < 2:
-        print("Skipping: not enough data")
-        continue
-
-    # --------------------------------------------------------
-    # Extract radar data
-    # --------------------------------------------------------
-
-    rx1, rx2 = basic_info_extraction(radar_cube_seg)
-    M_both = np.hstack([rx1, rx2])
-
-    # ========================================================
-    # REFERENCE SEGMENT
-    # ========================================================
-
-    if i == REFERENCE_SEGMENT:
-
-        reference_mean = np.mean(
-            M_both,
-            axis=0
-        )
-
-        print(
-            "Stored reference mean from "
-            f"segment {REFERENCE_SEGMENT}"
-        )
-
-        continue
-
-    # --------------------------------------------------------
-    # Make sure reference mean exists
-    # --------------------------------------------------------
-
-    if reference_mean is None:
-        raise RuntimeError(
-            "Reference mean has not been calculated."
-        )
-
-    # --------------------------------------------------------
-    # Apply SAME reference mean to every segment
-    # --------------------------------------------------------
-
-    M_centered = M_both# - reference_mean
-
-
-    # --------------------------------------------------------
-    # Align motor position to radar timestamps
-    # --------------------------------------------------------
-
-    y_aligned = np.interp(
-        radar_times,
-        motor_times,
-        motor_positions
-    )
-
-    y = y_aligned / 2000.0
-
-
-    # --------------------------------------------------------
-    # Store prepared segment
-    # --------------------------------------------------------
-
-    prepared_segments.append({
-
-        "segment": i,
-        "radar_cube": radar_cube_seg,
-        "radar_times": radar_times,
-        "motor_times": motor_times,
-        "motor_positions": motor_positions,
-        "X": M_centered,
-        "y": y
-    })
-
-
-print("\n==============================================")
-print("Prepared segments:")
-print([seg["segment"] for seg in prepared_segments])
-print("==============================================")
-
-
-# ============================================================
-# 3. CREATE TRAIN / VALIDATION / TEST SETS
-# ============================================================
-
-def stack_dataset(dataset):
-    X = np.vstack([seg["X"] for seg in dataset])
-    y = np.concatenate([seg["y"] for seg in dataset]).reshape(-1, 1)
-    return X, y
-
-
-train_data = [
-    seg
-    for seg in prepared_segments
-    if seg["segment"] in TRAIN_SEGMENTS
-]
-
-validation_data = [
-    seg
-    for seg in prepared_segments
-    if seg["segment"] in VALIDATION_SEGMENTS
-]
-
-test_data = [
-    seg
-    for seg in prepared_segments
-    if seg["segment"] in TEST_SEGMENTS
-]
-
-
-print("\n==============================================")
-print("DATA SPLIT")
-print("==============================================")
-
-print("Training:", [seg["segment"] for seg in train_data])
-print("Validation:", [seg["segment"] for seg in validation_data])
-print("Test:", [seg["segment"] for seg in test_data])
-
-
-# ============================================================
-# 4. TRAIN MODEL
-# ============================================================
-
-print("\n==============================================")
-print(f"TRAINING MODEL ON TRAIN SEGMENTS {TRAIN_SEGMENTS}")
-print("==============================================")
-
-X_train, y_train = stack_dataset(train_data)
-X_val, y_val = stack_dataset(validation_data)
-
-print("X_train shape:", X_train.shape)
-print("y_train shape:", y_train.shape)
-print("X_val shape:", X_val.shape)
-print("y_val shape:", y_val.shape)
-
-
-# ------------------------------------------------------------
-# Train model
-# ------------------------------------------------------------
-
-model = MotorNetRawData.train_model(
-    X_train,
-    y_train,
-    validation_X=X_val,
-    validation_y=y_val,
-    segment_id="train_val_split",
-)
-
-
-# ------------------------------------------------------------
-# Save model ONCE
-# ------------------------------------------------------------
-
-model_path = os.path.join(
-    save_dir,
-    f"model_train_{TRAIN_SEGMENTS}_val_{VALIDATION_SEGMENTS}.pt"
-)
-
-torch.save(
-    model.state_dict(),
-    model_path
-)
-
-wandb.save(model_path)
-
-wandb.watch(
-    model,
-    log="all"
-)
-
-
-wandb.log({
-    "train_segments": TRAIN_SEGMENTS,
-    "validation_segments": VALIDATION_SEGMENTS,
-    "test_segments": TEST_SEGMENTS,
-    "training_samples": len(X_train),
-    "validation_samples": len(X_val),
-    "input_size": X_train.shape[1],
-})
-
-
-# ============================================================
-# 5. EVALUATION FUNCTION
-# ============================================================
-
-def evaluate_model(
-    model,
-    data,
-    dataset_name,
-    output_dir
-):
-
+def evaluate_model(model, data, dataset_name, output_dir):
     model.eval()
-
+    output_dir = os.fspath(output_dir)
+    os.makedirs(output_dir, exist_ok=True)
     results = []
 
-
     for segment in data:
-
         segment_id = segment["segment"]
-        X = segment["X"]
-        t_radar = segment["radar_times"]
-        t_motor = segment["motor_times"]
-        y_motor = (
-            segment["motor_positions"]
-            / 2000.0
-        )
+        features = segment["X"]
+        radar_times = segment["radar_times"]
+        motor_times = segment["motor_times"]
+        motor_positions = segment["motor_positions"] / 2000.0
 
-
-        # ----------------------------------------------------
-        # Prediction
-        # ----------------------------------------------------
-
-        X_tensor = torch.tensor(
-            X,
-            dtype=torch.float32
-        )
-
-
+        features_tensor = torch.tensor(features, dtype=torch.float32)
         with torch.no_grad():
+            predictions = model(features_tensor).reshape(-1).cpu().numpy()
 
-            y_pred = (
-                model(X_tensor)
-                .squeeze()
-                .cpu()
-                .numpy()
-            )
-
-
-        # ----------------------------------------------------
-        # Interpolate prediction to motor timestamps
-        # ----------------------------------------------------
-
-        y_interp = np.interp(
-            t_motor,
-            t_radar,
-            y_pred
+        predicted_at_motor_times = np.interp(
+            motor_times,
+            radar_times,
+            predictions,
         )
-
-
-        # ----------------------------------------------------
-        # Calculate errors
-        # ----------------------------------------------------
-
-        rmse_error = rmse(
-            y_motor,
-            y_interp
-        )
-
-        mae_error = mae(
-            y_motor,
-            y_interp
-        )
-
-        max_error = max_abs_error(
-            y_motor,
-            y_interp
-        )
-
-
-        # ----------------------------------------------------
-        # Store results
-        # ----------------------------------------------------
+        rmse_error = rmse(motor_positions, predicted_at_motor_times)
+        mae_error = mae(motor_positions, predicted_at_motor_times)
+        max_error = max_abs_error(motor_positions, predicted_at_motor_times)
 
         results.append({
             "segment": segment_id,
-            "rmse": rmse_error,
-            "mae": mae_error,
-            "max_error": max_error
+            "rmse": float(rmse_error),
+            "mae": float(mae_error),
+            "max_error": float(max_error),
         })
 
-
-        # ====================================================
-        # PLOT
-        # ====================================================
-
-        plt.figure(
-            figsize=(10, 5)
+        figure, axis = plt.subplots(figsize=(10, 5))
+        axis.plot(
+            motor_times,
+            motor_positions,
+            label="Measured motor movement",
+            linewidth=2,
         )
-
-        plt.plot(
-            t_motor,
-            y_motor,
-            label="True motor movement",
-            linewidth=2
+        axis.plot(
+            radar_times,
+            predictions,
+            label="Radar prediction",
+            alpha=0.8,
         )
-
-        plt.plot(
-            t_radar,
-            y_pred,
-            label="Predicted",
-            alpha=0.8
+        axis.plot(
+            motor_times,
+            predicted_at_motor_times,
+            label="Prediction interpolated to motor times",
+            alpha=0.8,
         )
-
-        plt.plot(
-            t_motor,
-            y_interp,
-            label="Predicted (interp)",
-            alpha=0.8
+        axis.set_xlabel("Time from first radar frame (s)")
+        axis.set_ylabel("Scaled motor position")
+        axis.set_title(
+            f"{dataset_name} segment {segment_id}: "
+            f"RMSE={rmse_error:.4f}, MAE={mae_error:.4f}, "
+            f"Max={max_error:.4f}"
         )
+        axis.grid(True)
+        axis.legend()
+        figure.tight_layout()
 
-        plt.xlabel("Time (s)")
-        plt.ylabel(
-            "Motor displacement (normalized)"
-        )
-        plt.title(
-            f"{dataset_name} | "
-            f"Calibration S{CALIBRATION_SEGMENT} "
-            f"→ Test S{segment_id}\n"
-            f"RMSE = {rmse_error:.4f} | "
-            f"MAE = {mae_error:.4f} | "
-            f"Max Error = {max_error:.4f}"
-        )
-        plt.legend()
-        plt.grid()
-
-
-        # ----------------------------------------------------
-        # Save plot
-        # ----------------------------------------------------
-
-        filename = os.path.join(
+        plot_path = os.path.join(
             output_dir,
-            f"{dataset_name.lower()}_"
-            f"cal_{CALIBRATION_SEGMENT}_"
-            f"segment_{segment_id}.png"
+            f"new_{dataset_name.lower()}_segment_{segment_id}.png",
         )
-
-
-        plt.savefig(
-            filename,
-            dpi=150,
-            bbox_inches="tight"
-        )
-
-
-        # ----------------------------------------------------
-        # WandB
-        # ----------------------------------------------------
-
+        figure.savefig(plot_path, dpi=150, bbox_inches="tight")
         wandb.log({
-
-            f"{dataset_name}/"
-            f"segment_{segment_id}/plot":
-                wandb.Image(plt),
-
-            f"{dataset_name}/"
-            f"segment_{segment_id}/rmse":
-                rmse_error,
-
-            f"{dataset_name}/"
-            f"segment_{segment_id}/mae":
-                mae_error,
-
-            f"{dataset_name}/"
-            f"segment_{segment_id}/max_error":
-                max_error
+            f"{dataset_name}/segment_{segment_id}/plot": wandb.Image(figure),
+            f"{dataset_name}/segment_{segment_id}/rmse": rmse_error,
+            f"{dataset_name}/segment_{segment_id}/mae": mae_error,
+            f"{dataset_name}/segment_{segment_id}/max_error": max_error,
         })
+        plt.close(figure)
 
-
-        plt.close()
-
+    if not results:
+        raise ValueError(f"No evaluable segments found for {dataset_name}")
 
     return results
 
 
-# ============================================================
-# 6. VALIDATION
-# ============================================================
+def main():
+    recording_pairs = [(RADAR, MOTOR)]
+    if "RADAR2" in globals() and "MOTOR2" in globals():
+        recording_pairs.append((RADAR2, MOTOR2))
+    if "RADAR3" in globals() and "MOTOR3" in globals():
+        recording_pairs.append((RADAR3, MOTOR3))
 
-print("\n==============================================")
-print("VALIDATION")
-print("==============================================")
+    segments = []
+    for radar_path, motor_path in recording_pairs:
+        segments.extend(
+            align_and_split(
+                radar_path,
+                motor_path,
+                segment_length=40.0,
+            )
+        )
 
+    prepared_segments = []
+    reference_mean = None
 
-validation_results = evaluate_model(
-    model=model,
-    data=validation_data,
-    dataset_name="Validation",
-    output_dir=validation_dir
-)
+    for segment_id, segment in enumerate(segments):
+        radar_cube, radar_times, motor_times, motor_positions = segment
 
+        if radar_times.size == 0 or motor_times.size < 2:
+            print(f"Skipping segment {segment_id}: not enough aligned samples")
+            continue
 
-# ------------------------------------------------------------
-# Print validation results
-# ------------------------------------------------------------
+        rx1, rx2 = basic_info_extraction(radar_cube)
+        features = np.hstack((rx1, rx2))
 
-print("\nValidation results:")
+        if segment_id == REFERENCE_SEGMENT:
+            reference_mean = np.mean(features, axis=0)
+            print(f"Stored reference mean from segment {REFERENCE_SEGMENT}")
+            continue
 
-for result in validation_results:
+        if reference_mean is None:
+            raise RuntimeError("Reference segment has no usable data")
 
-    print(
-        f"Segment {result['segment']}: "
-        f"RMSE = {result['rmse']:.4f}, "
-        f"MAE = {result['mae']:.4f}, "
-        f"Max = {result['max_error']:.4f}"
+        aligned_positions = np.interp(radar_times, motor_times, motor_positions)
+        prepared_segments.append({
+            "segment": segment_id,
+            "radar_cube": radar_cube,
+            "radar_times": radar_times,
+            "motor_times": motor_times,
+            "motor_positions": motor_positions,
+            "X": features,
+            "y": aligned_positions / 2000.0,
+        })
+
+    print("Prepared segments:", [segment["segment"] for segment in prepared_segments])
+
+    train_data = [
+        segment for segment in prepared_segments
+        if segment["segment"] in TRAIN_SEGMENTS
+    ]
+    validation_data = [
+        segment for segment in prepared_segments
+        if segment["segment"] in VALIDATION_SEGMENTS
+    ]
+    test_data = [
+        segment for segment in prepared_segments
+        if segment["segment"] in TEST_SEGMENTS
+    ]
+
+    print("Training segments:", [segment["segment"] for segment in train_data])
+    print("Validation segments:", [segment["segment"] for segment in validation_data])
+    print("Test segments:", [segment["segment"] for segment in test_data])
+
+    x_train, y_train = stack_dataset(train_data, "training")
+    x_validation, y_validation = stack_dataset(validation_data, "validation")
+
+    model = MotorNetRawData.train_model(
+        x_train,
+        y_train,
+        validation_X=x_validation,
+        validation_y=y_validation,
+        segment_id="train_val_split",
     )
 
+    os.makedirs(save_dir, exist_ok=True)
+    model_path = os.path.join(
+        save_dir,
+        f"model_train_{TRAIN_SEGMENTS}_val_{VALIDATION_SEGMENTS}.pt",
+    )
+    torch.save(model.state_dict(), model_path)
+    wandb.save(model_path)
+    wandb.watch(model, log="all")
+    wandb.log({
+        "train_segments": TRAIN_SEGMENTS,
+        "validation_segments": VALIDATION_SEGMENTS,
+        "test_segments": TEST_SEGMENTS,
+        "training_samples": len(x_train),
+        "validation_samples": len(x_validation),
+        "input_size": x_train.shape[1],
+    })
 
-# ============================================================
-# 7. FINAL TEST
-# ============================================================
-
-print("\n==============================================")
-print("FINAL TEST")
-print("==============================================")
-
-
-test_results = evaluate_model(
-    model=model,
-    data=test_data,
-    dataset_name="Test",
-    output_dir=test_dir
-)
-
-
-# ------------------------------------------------------------
-# Print test results
-# ------------------------------------------------------------
-
-print("\nTest results:")
-
-for result in test_results:
-
-    print(
-        f"Segment {result['segment']}: "
-        f"RMSE = {result['rmse']:.4f}, "
-        f"MAE = {result['mae']:.4f}, "
-        f"Max = {result['max_error']:.4f}"
+    validation_results = evaluate_model(
+        model,
+        validation_data,
+        "Validation",
+        validation_dir,
+    )
+    test_results = evaluate_model(
+        model,
+        test_data,
+        "Test",
+        test_dir,
     )
 
+    for split_name, results in (
+        ("Validation", validation_results),
+        ("Test", test_results),
+    ):
+        print(f"\n{split_name} results:")
+        for result in results:
+            print(
+                f"Segment {result['segment']}: "
+                f"RMSE={result['rmse']:.4f}, "
+                f"MAE={result['mae']:.4f}, "
+                f"Max={result['max_error']:.4f}"
+            )
 
-# ============================================================
-# 8. TEST RESULTS AS ARRAYS
-# ============================================================
+    test_rmse = np.asarray([result["rmse"] for result in test_results])
+    test_mae = np.asarray([result["mae"] for result in test_results])
+    test_max_error = np.asarray([result["max_error"] for result in test_results])
+    mean_test_metrics = {
+        "final_test/mean_rmse": float(np.mean(test_rmse)),
+        "final_test/mean_mae": float(np.mean(test_mae)),
+        "final_test/mean_max_error": float(np.mean(test_max_error)),
+    }
+    print("\nFinal test performance:", mean_test_metrics)
+    wandb.log(mean_test_metrics)
 
-test_rmse = np.array([
-    result["rmse"]
-    for result in test_results
-])
+    figure, axis = plt.subplots(figsize=(10, 3))
+    axis.imshow(np.asarray([test_rmse]), aspect="auto")
+    figure.colorbar(axis.images[0], ax=axis, label="RMSE")
+    axis.set_xticks(range(len(TEST_SEGMENTS)), TEST_SEGMENTS)
+    axis.set_yticks([0], [f"Calibration {CALIBRATION_SEGMENT}"])
+    axis.set_xlabel("Test segment")
+    axis.set_ylabel("Calibration segments")
+    axis.set_title("Final test RMSE")
+    figure.tight_layout()
+    rmse_matrix_path = os.path.join(test_dir, "new_final_test_rmse_matrix.png")
+    figure.savefig(rmse_matrix_path, dpi=150, bbox_inches="tight")
+    wandb.log({"final_test/rmse_matrix": wandb.Image(figure)})
+    plt.close(figure)
 
-test_mae = np.array([
-    result["mae"]
-    for result in test_results
-])
-
-test_max_error = np.array([
-    result["max_error"]
-    for result in test_results
-])
-
-
-# ============================================================
-# 9. OVERALL TEST PERFORMANCE
-# ============================================================
-
-mean_test_rmse = np.mean(test_rmse)
-
-mean_test_mae = np.mean(test_mae)
-
-mean_test_max_error = np.mean(
-    test_max_error
-)
-
-
-print("\n==============================================")
-print("FINAL TEST PERFORMANCE")
-print("==============================================")
-
-print(
-    f"Mean RMSE      = {mean_test_rmse:.4f}"
-)
-
-print(
-    f"Mean MAE       = {mean_test_mae:.4f}"
-)
-
-print(
-    f"Mean Max Error = {mean_test_max_error:.4f}"
-)
+    wandb.config.update({
+        "reference_segment": REFERENCE_SEGMENT,
+        "train_segments": TRAIN_SEGMENTS,
+        "validation_segments": VALIDATION_SEGMENTS,
+        "test_segments": TEST_SEGMENTS,
+        "calibration_segment": CALIBRATION_SEGMENT,
+    })
+    wandb.finish()
 
 
-# ============================================================
-# 10. LOG OVERALL TEST PERFORMANCE
-# ============================================================
-
-wandb.log({
-
-    "final_test/mean_rmse":
-        mean_test_rmse,
-
-    "final_test/mean_mae":
-        mean_test_mae,
-
-    "final_test/mean_max_error":
-        mean_test_max_error
-})
-
-
-# ============================================================
-# 11. TEST RMSE MATRIX
-# ============================================================
-
-# One calibration model (segment 3)
-# evaluated on all test segments.
-
-test_rmse_matrix = np.array([
-    test_rmse
-])
-
-
-plt.figure(figsize=(10, 3))
-
-plt.imshow(test_rmse_matrix, aspect="auto")
-
-plt.colorbar(label="RMSE in cm")
-
-plt.xticks(range(len(TEST_SEGMENTS)), TEST_SEGMENTS)
-
-plt.yticks([0], [f"Calibration S{CALIBRATION_SEGMENT}"])
-
-plt.xlabel("Test segment")
-plt.ylabel("Calibration model")
-
-plt.title("Final Test Performance - RMSE")
-
-
-filename = os.path.join(
-    test_dir,
-    "final_test_rmse_matrix.png"
-)
-
-
-plt.savefig(
-    filename,
-    dpi=150,
-    bbox_inches="tight"
-)
-
-
-wandb.log({
-    "final_test/rmse_matrix":
-        wandb.Image(plt)
-})
-
-
-plt.close()
-
-
-# ============================================================
-# 12. FINISH
-# ============================================================
-
-wandb.config.update({
-
-    "reference_segment":
-        REFERENCE_SEGMENT,
-
-    "train_segments":
-        TRAIN_SEGMENTS,
-
-    "validation_segments":
-        VALIDATION_SEGMENTS,
-
-    "test_segments":
-        TEST_SEGMENTS,
-
-    "calibration_segment":
-        CALIBRATION_SEGMENT,
-})
-
-
-wandb.finish()
+if __name__ == "__main__":
+    main()
 
