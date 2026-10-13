@@ -24,8 +24,8 @@ wandb.init(
 # ══════════════════════════════════════════════════════════════════════════════
 # Calibrate and rnd Movement
 #Both done in one measurement
-RADAR = "Data/RadarTest/radar_20261008_153802.npz"
-MOTOR = "Data/TimeLogs/time_log_20261008_153847.json"  
+RADAR = "Data/PolarisationLogs/RadarLogs/radar_20261012_153853.npz"
+MOTOR = "Data/PolarisationLogs/MotorLogs/time_log_20261012_154048.json"  
 
 # RADAR = "Data/RadarTest/radar_20260904_111612.npz"
 # MOTOR = "Data/TimeLogs/time_log_20260904_111649.json"  
@@ -38,7 +38,7 @@ MOTOR = "Data/TimeLogs/time_log_20261008_153847.json"
 # RADAR3 = "Data/RadarTest/radar_20260826_133158.npz"
 # MOTOR3 = "Data/TimeLogs/time_log_20260826_135221.json"
 
-save_dir = "Data/calibration_plots/TrainValidateTest/00"
+save_dir = "Data/calibration_plots/TrainValidateTest/PolarisationLogs/Rx1_p45deg_Rx2_n45deg"
 
 validation_dir = os.path.join(save_dir, "Validation")
 test_dir = os.path.join(save_dir, "Test")
@@ -689,7 +689,7 @@ def plot_motor(times, positions):
 
 TRAIN_SEGMENTS = [1, 2, 3, 4]
 VALIDATION_SEGMENTS = [5, 6]
-TEST_SEGMENTS = [7, 8, 9, 10, 11, 12, 13]
+TEST_SEGMENTS = [7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]
 REFERENCE_SEGMENT = 0
 CALIBRATION_SEGMENT = TRAIN_SEGMENTS
 
@@ -932,6 +932,20 @@ def main():
     wandb.log({"final_test/rmse_matrix": wandb.Image(figure)})
     plt.close(figure)
 
+    figure, axis = plt.subplots(figsize=(10, 3))
+    axis.imshow(np.asarray([test_mae]), aspect="auto")
+    figure.colorbar(axis.images[0], ax=axis, label="MAE")
+    axis.set_xticks(range(len(TEST_SEGMENTS)), TEST_SEGMENTS)
+    axis.set_yticks([0], [f"Calibration {CALIBRATION_SEGMENT}"])
+    axis.set_xlabel("Test segment")
+    axis.set_ylabel("Calibration segments")
+    axis.set_title("Final test MAE")
+    figure.tight_layout()
+    mae_matrix_path = os.path.join(test_dir, "new_final_test_mae_matrix.png")
+    figure.savefig(mae_matrix_path, dpi=150, bbox_inches="tight")
+    wandb.log({"final_test/mae_matrix": wandb.Image(figure)})
+    plt.close(figure)
+
     wandb.config.update({
         "reference_segment": REFERENCE_SEGMENT,
         "train_segments": TRAIN_SEGMENTS,
@@ -941,7 +955,15 @@ def main():
     })
     wandb.finish()
 
+    print(
+        f"\nAverage RMSE across {len(test_results)} test segments: "
+        f"{mean_test_metrics['final_test/mean_rmse']:.4f}"
+    )
+    print(
+        f"Average MAE across {len(test_results)} test segments: "
+        f"{mean_test_metrics['final_test/mean_mae']:.4f}"
+    )
+
 
 if __name__ == "__main__":
     main()
-
