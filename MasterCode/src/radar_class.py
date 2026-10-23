@@ -15,7 +15,7 @@ class Radar:
         port_data=5001,
         num_samples_per_frame=520,
         rx_offset=10,
-        save_dir_data="Data/TestingLogs/RadarTest",
+        save_dir_data="Data/CalibrationTrial/RadarLogs",
     ):
         # Radar configuration
         self.ip = ip
@@ -161,7 +161,7 @@ class Radar:
     # ACQUISITION
     # --------------------------------------------------
 
-    def collect(self, stop_event):
+    def collect(self, stop_event, time_origin=None):
         """
         Acquire radar data until stop_event is set.
 
@@ -191,7 +191,8 @@ class Radar:
                     break
 
                 radar_frames.append(frame)
-                timestamps.append(datetime.now())
+                #timestamps.append(datetime.now())
+                timestamps.append(time.perf_counter() - time_origin)
 
         except KeyboardInterrupt:
             print("Stopped manually.")

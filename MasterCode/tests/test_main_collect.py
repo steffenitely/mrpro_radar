@@ -40,9 +40,11 @@ class FakeRadar:
         self.time_data = np.array([[10, 11], [12, 13]])
         self.saved_data = None
         self.plotted_data = None
+        self.time_origin = None
 
-    def collect(self, stop_event):
+    def collect(self, stop_event, time_origin=None):
         assert not stop_event.is_set()
+        self.time_origin = time_origin
         return self.radar_data, self.time_data
 
     def save(self, radar_data, time_data):
@@ -70,6 +72,7 @@ def test_main_collect_hands_off_radar_and_motor_data(monkeypatch, tmp_path):
     main_collect.main(motor=motor, radar=radar)
 
     assert radar.saved_data is not None
+    assert radar.time_origin is not None
     np.testing.assert_array_equal(radar.saved_data[0], radar.radar_data)
     np.testing.assert_array_equal(radar.saved_data[1], radar.time_data)
     np.testing.assert_array_equal(radar.plotted_data, radar.radar_data)

@@ -31,9 +31,9 @@ def ask_save_data():
         print("Please enter 'y' or 'n'.")
 
 
-def radar_worker(radar, stop_event, result, save_data):
+def radar_worker(radar, stop_event, result, save_data, time_origin):
     try:
-        radar_cube, time_cube = radar.collect(stop_event)
+        radar_cube, time_cube = radar.collect(stop_event, time_origin=time_origin)
         result["data"] = (radar_cube, time_cube)
         if save_data:
             result["file"] = radar.save(
@@ -129,11 +129,11 @@ def main(motor=None, radar=None):
     motor.move_to(3000, speed="1") #initial movement so motor is in correct state before starting radar acquisition
     time.sleep(1)
     
+    start_time = time.perf_counter()
     radar_thread = threading.Thread(
         target=radar_worker,
-        args=(radar, stop_event, radar_result, save_data),
+        args=(radar, stop_event, radar_result, save_data, start_time),
     )
-    start_time = time.perf_counter()
 
     try:
         radar_thread.start()
