@@ -24,8 +24,8 @@ wandb.init(
 # ══════════════════════════════════════════════════════════════════════════════
 # Calibrate and rnd Movement
 #Both done in one measurement
-RADAR = "Data/PolarisationLogs/RadarLogs/radar_20261012_153853.npz"
-MOTOR = "Data/PolarisationLogs/MotorLogs/time_log_20261012_154048.json"  
+RADAR = "Data/PolarisationLogs/RadarLogs/radar_20261015_155402.npz"
+MOTOR = "Data/PolarisationLogs/MotorLogs/time_log_20261015_155611.json"  
 
 # RADAR = "Data/RadarTest/radar_20260904_111612.npz"
 # MOTOR = "Data/TimeLogs/time_log_20260904_111649.json"  
@@ -38,7 +38,7 @@ MOTOR = "Data/PolarisationLogs/MotorLogs/time_log_20261012_154048.json"
 # RADAR3 = "Data/RadarTest/radar_20260826_133158.npz"
 # MOTOR3 = "Data/TimeLogs/time_log_20260826_135221.json"
 
-save_dir = "Data/calibration_plots/TrainValidateTest/PolarisationLogs/Rx1_p45deg_Rx2_n45deg"
+save_dir = "Data/calibration_plots/TrainValidateTest/L_Shape/Rx1_n90deg_Rx2_n90deg"
 
 validation_dir = os.path.join(save_dir, "Validation")
 test_dir = os.path.join(save_dir, "Test")
