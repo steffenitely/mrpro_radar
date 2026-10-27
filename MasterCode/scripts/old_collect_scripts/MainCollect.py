@@ -8,8 +8,8 @@ import random
 
 
 #from motor import run_motor, run_motor_once
-from radar import run_radar, plot_radar_data
-from motor import MotorController
+from MasterCode.scripts.old_collect_scripts.radar import run_radar, plot_radar_data
+from MasterCode.scripts.old_collect_scripts.motor import MotorController
 
 SAVE_DIR_LOG = "Data/TimeLogs"
 os.makedirs(SAVE_DIR_LOG, exist_ok=True)
